@@ -92,50 +92,50 @@
         <div id="canvas-wrap" class="canvas-wrap">
           <canvas id="game-canvas"></canvas>
           <div id="drop-hint" class="drop-hint">Choose an item, click once to place it, then orbit or select furniture to edit.</div>
-        </div>
 
-        <section id="inspector" class="inspector" aria-label="Selected furniture editor">
-          <div class="inspector-head">
-            <div>
-              <p class="eyebrow">Selected</p>
-              <h2 id="selected-name">Nothing selected</h2>
+          <section id="inspector" class="inspector" aria-label="Selected furniture editor">
+            <div class="inspector-head">
+              <div>
+                <p class="eyebrow">Selected</p>
+                <h2 id="selected-name">Nothing selected</h2>
+              </div>
+              <button id="delete-btn" class="icon-tool danger" type="button" title="Delete selected">X</button>
             </div>
-            <button id="delete-btn" class="icon-tool danger" type="button" title="Delete selected">X</button>
-          </div>
-          <div class="editor-grid">
-            <label>
-              <span>Color</span>
-              <input id="color-input" type="color" value="#73876f" />
-            </label>
-            <label>
-              <span>Material</span>
-              <select id="style-select">
-                <option value="fabric">Fabric</option>
-                <option value="wood">Wood</option>
-                <option value="painted">Painted</option>
-                <option value="metal">Metal</option>
-                <option value="siding">Vinyl siding</option>
-                <option value="brick">Brick</option>
-                <option value="stone">Stone</option>
-                <option value="shingles">Shingles</option>
-              </select>
-            </label>
-            <label>
-              <span>Variant</span>
-              <select id="variant-select"></select>
-            </label>
-            <label>
-              <span>Scale</span>
-              <input id="scale-input" type="range" min="0.55" max="1.65" value="1" step="0.05" />
-            </label>
-            <div class="rotate-row">
-              <button id="rotate-left" class="icon-tool" type="button" title="Rotate left">L</button>
-              <button id="rotate-right" class="icon-tool" type="button" title="Rotate right">R</button>
+            <div class="editor-grid">
+              <label>
+                <span>Color</span>
+                <input id="color-input" type="color" value="#73876f" />
+              </label>
+              <label>
+                <span>Material</span>
+                <select id="style-select">
+                  <option value="fabric">Fabric</option>
+                  <option value="wood">Wood</option>
+                  <option value="painted">Painted</option>
+                  <option value="metal">Metal</option>
+                  <option value="siding">Vinyl siding</option>
+                  <option value="brick">Brick</option>
+                  <option value="stone">Stone</option>
+                  <option value="shingles">Shingles</option>
+                </select>
+              </label>
+              <label>
+                <span>Variant</span>
+                <select id="variant-select"></select>
+              </label>
+              <label>
+                <span>Scale</span>
+                <input id="scale-input" type="range" min="0.55" max="1.65" value="1" step="0.05" />
+              </label>
+              <div class="rotate-row">
+                <button id="rotate-left" class="icon-tool" type="button" title="Rotate left">L</button>
+                <button id="rotate-right" class="icon-tool" type="button" title="Rotate right">R</button>
+              </div>
+              <button id="duplicate-btn" class="tool lock-tool" type="button">Duplicate</button>
+              <button id="lock-room-btn" class="tool lock-tool" type="button">Lock item</button>
             </div>
-            <button id="duplicate-btn" class="tool lock-tool" type="button">Duplicate</button>
-            <button id="lock-room-btn" class="tool lock-tool" type="button">Lock item</button>
-          </div>
-        </section>
+          </section>
+        </div>
       </main>
     </div>
 
