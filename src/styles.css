@@ -137,6 +137,10 @@ button {
   text-transform: uppercase;
 }
 
+.editor-grid label[hidden] {
+  display: none !important;
+}
+
 .search-row input,
 .editor-grid input,
 .editor-grid select {
