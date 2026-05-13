@@ -1725,27 +1725,91 @@ function createStructureAsset(group, entry) {
     const depth = entry.depth || 3.5;
     const variant = entry.variant || "gable";
     if (variant === "flat") {
-      addBox(group, [width, 0.28, depth], [0, ROOM_HEIGHT + 0.24, 0], makeMat(entry.color, entry.material), "Flat roof");
-      addBox(group, [width + 0.16, 0.12, 0.14], [0, ROOM_HEIGHT + 0.42, -depth / 2 + 0.12], makeMat(shadeHex(entry.color, 18), entry.material), "Roof lip");
-      addBox(group, [width + 0.16, 0.12, 0.14], [0, ROOM_HEIGHT + 0.42, depth / 2 - 0.12], makeMat(shadeHex(entry.color, 18), entry.material), "Roof lip");
+      addBox(group, [width, 0.28, depth], [0, ROOM_HEIGHT + 0.48, 0], makeMat(entry.color, entry.material), "Flat roof");
+      addBox(group, [width + 0.16, 0.12, 0.14], [0, ROOM_HEIGHT + 0.66, -depth / 2 + 0.12], makeMat(shadeHex(entry.color, 18), entry.material), "Roof lip");
+      addBox(group, [width + 0.16, 0.12, 0.14], [0, ROOM_HEIGHT + 0.66, depth / 2 - 0.12], makeMat(shadeHex(entry.color, 18), entry.material), "Roof lip");
     } else if (variant === "hip") {
-      const front = addBox(group, [width, 0.22, depth * 0.52], [0, ROOM_HEIGHT + 0.3, depth * 0.18], makeMat(entry.color, entry.material), "Hip roof plane");
+      const roofBaseY = ROOM_HEIGHT + 0.48;
+      const front = addBox(group, [width, 0.22, depth * 0.52], [0, roofBaseY, depth * 0.18], makeMat(entry.color, entry.material), "Hip roof plane");
       front.rotation.x = 0.25;
-      const back = addBox(group, [width, 0.22, depth * 0.52], [0, ROOM_HEIGHT + 0.3, -depth * 0.18], makeMat(shadeHex(entry.color, -18), entry.material), "Hip roof plane");
+      const back = addBox(group, [width, 0.22, depth * 0.52], [0, roofBaseY, -depth * 0.18], makeMat(shadeHex(entry.color, -18), entry.material), "Hip roof plane");
       back.rotation.x = -0.25;
-      const leftHip = addBox(group, [0.22, 0.18, depth * 0.78], [-width / 2 + 0.24, ROOM_HEIGHT + 0.34, 0], makeMat(shadeHex(entry.color, -8), entry.material), "Hip end");
+      const leftHip = addBox(group, [0.22, 0.18, depth * 0.78], [-width / 2 + 0.24, roofBaseY + 0.04, 0], makeMat(shadeHex(entry.color, -8), entry.material), "Hip end");
       leftHip.rotation.z = -0.34;
-      const rightHip = addBox(group, [0.22, 0.18, depth * 0.78], [width / 2 - 0.24, ROOM_HEIGHT + 0.34, 0], makeMat(shadeHex(entry.color, -8), entry.material), "Hip end");
+      const rightHip = addBox(group, [0.22, 0.18, depth * 0.78], [width / 2 - 0.24, roofBaseY + 0.04, 0], makeMat(shadeHex(entry.color, -8), entry.material), "Hip end");
       rightHip.rotation.z = 0.34;
-      addBox(group, [width * 0.55, 0.1, 0.14], [0, ROOM_HEIGHT + 0.58, 0], makeMat(shadeHex(entry.color, 18), entry.material), "Hip ridge");
+      addBox(group, [width * 0.55, 0.1, 0.14], [0, roofBaseY + 0.28, 0], makeMat(shadeHex(entry.color, 18), entry.material), "Hip ridge");
     } else {
-      const left = addBox(group, [width, 0.24, depth * 0.58], [0, ROOM_HEIGHT + 0.28, -depth * 0.18], makeMat(entry.color, entry.material), "Roof plane");
-      left.rotation.x = -0.28;
-      const right = addBox(group, [width, 0.24, depth * 0.58], [0, ROOM_HEIGHT + 0.28, depth * 0.18], makeMat(shadeHex(entry.color, -20), entry.material), "Roof plane");
-      right.rotation.x = 0.28;
-      addBox(group, [width + 0.18, 0.12, 0.16], [0, ROOM_HEIGHT + 0.56, 0], makeMat(shadeHex(entry.color, 18), entry.material), "Roof ridge");
+      createGableRoof(group, entry, width, depth);
     }
   }
+}
+
+function createGableRoof(group, entry, width, depth) {
+  const eaveY = ROOM_HEIGHT + 0.42;
+  const ridgeY = ROOM_HEIGHT + Math.max(0.95, Math.min(1.45, depth * 0.13));
+  const halfW = width / 2;
+  const halfD = depth / 2;
+  addRoofQuad(
+    group,
+    [
+      [-halfW, eaveY, -halfD],
+      [halfW, eaveY, -halfD],
+      [halfW, ridgeY, 0],
+      [-halfW, ridgeY, 0],
+    ],
+    makeRoofMat(entry.color, entry.material),
+    "Back roof plane",
+  );
+  addRoofQuad(
+    group,
+    [
+      [-halfW, ridgeY, 0],
+      [halfW, ridgeY, 0],
+      [halfW, eaveY, halfD],
+      [-halfW, eaveY, halfD],
+    ],
+    makeRoofMat(shadeHex(entry.color, -18), entry.material),
+    "Front roof plane",
+  );
+  addGableEnd(group, -halfW, eaveY, ridgeY, halfD, makeMat(shadeHex(entry.color, -12), entry.material));
+  addGableEnd(group, halfW, eaveY, ridgeY, halfD, makeMat(shadeHex(entry.color, -12), entry.material));
+  addBox(group, [width + 0.18, 0.12, 0.18], [0, ridgeY + 0.06, 0], makeMat(shadeHex(entry.color, 18), entry.material), "Roof ridge cap");
+  addBox(group, [width + 0.22, 0.16, 0.18], [0, eaveY - 0.06, -halfD + 0.04], makeMat("#f5ead5", "painted"), "Back fascia");
+  addBox(group, [width + 0.22, 0.16, 0.18], [0, eaveY - 0.06, halfD - 0.04], makeMat("#f5ead5", "painted"), "Front fascia");
+  addBox(group, [0.18, 0.16, depth + 0.08], [-halfW + 0.04, eaveY - 0.06, 0], makeMat("#f5ead5", "painted"), "Side fascia");
+  addBox(group, [0.18, 0.16, depth + 0.08], [halfW - 0.04, eaveY - 0.06, 0], makeMat("#f5ead5", "painted"), "Side fascia");
+}
+
+function makeRoofMat(color, material) {
+  const mat = makeMat(color, material);
+  mat.side = THREE.DoubleSide;
+  return mat;
+}
+
+function addRoofQuad(group, points, mat, name) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(points.flat(), 3));
+  geometry.setIndex([0, 1, 2, 0, 2, 3]);
+  geometry.computeVertexNormals();
+  const mesh = new THREE.Mesh(geometry, mat);
+  mesh.name = name;
+  group.add(mesh);
+  return mesh;
+}
+
+function addGableEnd(group, x, eaveY, ridgeY, halfD, mat) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute([x, eaveY, -halfD, x, eaveY, halfD, x, ridgeY, 0], 3),
+  );
+  geometry.setIndex([0, 1, 2]);
+  geometry.computeVertexNormals();
+  const mesh = new THREE.Mesh(geometry, mat);
+  mesh.name = "Gable end";
+  group.add(mesh);
+  return mesh;
 }
 
 function createOutdoorAsset(group, entry) {
