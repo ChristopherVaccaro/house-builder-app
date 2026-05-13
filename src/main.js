@@ -27,6 +27,9 @@ const deleteBtn = document.querySelector("#delete-btn");
 const tourViewBtn = document.querySelector("#tour-view");
 const roofsToggleBtn = document.querySelector("#roofs-toggle");
 const dozerBtn = document.querySelector("#dozer-btn");
+const levelOneBtn = document.querySelector("#level-1-btn");
+const levelTwoBtn = document.querySelector("#level-2-btn");
+const levelsAllBtn = document.querySelector("#levels-all-btn");
 const projectModal = document.querySelector("#project-modal");
 const projectModalTitle = document.querySelector("#project-modal-title");
 const projectNameRow = document.querySelector("#project-name-row");
@@ -41,6 +44,7 @@ const PROJECTS_KEY = "homeforge-room-studio-projects-v1";
 const GRID_SIZE = 0.25;
 const ROOM_HEIGHT = 3;
 const WALL_THICKNESS = 0.16;
+const LEVEL_HEIGHT = 3.35;
 const LOT_LIMIT = 60;
 const ROOF_OVERHANG = 1.2;
 const EXTERIOR_MATERIAL_TYPES = new Set(["siding", "brick", "stone", "shingles"]);
@@ -208,10 +212,12 @@ const VARIANTS = {
   stairs: [
     { id: "straight", label: "Straight" },
     { id: "landing", label: "With Landing" },
+    { id: "second-floor", label: "To Level 2" },
   ],
   "wide-stairs": [
     { id: "straight", label: "Straight" },
     { id: "landing", label: "With Landing" },
+    { id: "second-floor", label: "To Level 2" },
   ],
   shrub: [
     { id: "cluster", label: "Cluster" },
@@ -273,6 +279,8 @@ const state = {
   shellClosed: false,
   highFidelity: false,
   roofsVisible: true,
+  activeLevel: 1,
+  showAllLevels: true,
   savedAt: null,
   room: {
     uid: MAIN_ROOM_ID,
@@ -285,6 +293,7 @@ const state = {
     scale: 1,
     position: [0, 0, 0],
     rotationY: 0,
+    level: 1,
     locked: true,
     width: 12,
     depth: 10,
@@ -344,6 +353,7 @@ orbit.maxDistance = 90;
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const activeLevelPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const hitPoint = new THREE.Vector3();
 const clock = new THREE.Clock();
 const dragState = {
@@ -407,6 +417,8 @@ buildLot();
 buildRoom();
 renderAssetPanel();
 wireUi();
+updateLevelUi();
+updateLevelVisibility();
 addStarterRoom();
 resize();
 animate();
@@ -947,6 +959,9 @@ function wireUi() {
   tourViewBtn.addEventListener("click", toggleTourMode);
   fidelityToggle.addEventListener("click", toggleHighFidelity);
   dozerBtn.addEventListener("click", () => setToolMode(state.toolMode === "bulldoze" ? "select" : "bulldoze"));
+  levelOneBtn.addEventListener("click", () => setActiveLevel(1));
+  levelTwoBtn.addEventListener("click", () => setActiveLevel(2));
+  levelsAllBtn.addEventListener("click", () => toggleAllLevels());
   projectPrimaryBtn.addEventListener("click", handleProjectPrimary);
   projectSecondaryBtn.addEventListener("click", closeProjectModal);
   projectCloseBtn.addEventListener("click", closeProjectModal);
@@ -1040,9 +1055,13 @@ function placeAsset(assetId, point, recordHistory = true) {
     return;
   }
   const isRoomModule = asset.kind === "room-module";
-  const containingRoom = asset.kind === "roof" ? findNearestRoomClusterBounds(point) : findContainingRoomBounds(point);
+  const activeLevel = state.activeLevel || 1;
+  const containingRoom = asset.kind === "roof" ? findNearestRoomClusterBounds(point, activeLevel) : findContainingRoomBounds(point, 0.25, activeLevel);
+  const entryLevel = containingRoom?.level || activeLevel;
   const isFreePlacement = isFreePlacementEntry(asset) || (!containingRoom && !isWallOpeningAsset(asset));
-  const placedPosition = asset.kind === "roof" && containingRoom ? [snap(containingRoom.x), 0, snap(containingRoom.z)] : [snap(point.x), 0, snap(point.z)];
+  const placedPosition = asset.kind === "roof" && containingRoom
+    ? [snap(containingRoom.x), getLevelY(entryLevel), snap(containingRoom.z)]
+    : [snap(point.x), getLevelY(entryLevel), snap(point.z)];
 
   const entry = {
     uid: crypto.randomUUID(),
@@ -1055,6 +1074,7 @@ function placeAsset(assetId, point, recordHistory = true) {
     variant: defaultVariantForKind(asset.kind),
     position: placedPosition,
     rotationY: rememberedRotation(asset.kind),
+    level: entryLevel,
     width: asset.kind === "roof" && containingRoom ? containingRoom.width + ROOF_OVERHANG : asset.width || state.room.width,
     depth: asset.kind === "roof" && containingRoom ? containingRoom.depth + ROOF_OVERHANG : asset.depth || state.room.depth,
     wallColor: asset.color || state.room.wallColor,
@@ -1079,6 +1099,7 @@ function placeAsset(assetId, point, recordHistory = true) {
   }
   if (isWallOpeningEntry(entry)) rebuildRoomShells();
   selectObject(entry.uid);
+  updateLevelVisibility();
   state.activeAssetId = null;
   clearPlacementPreview();
   renderAssetPanel();
@@ -1090,6 +1111,7 @@ function placeRoomTemplate(asset, point, recordHistory = true) {
   const template = ROOM_TEMPLATES[asset.id];
   if (!template || !point) return;
   const templateRoom = template.room;
+  const level = state.activeLevel || 1;
   const roomEntry = {
     uid: crypto.randomUUID(),
     assetId: "room-module",
@@ -1099,8 +1121,9 @@ function placeRoomTemplate(asset, point, recordHistory = true) {
     material: "painted",
     variant: "default",
     scale: 1,
-    position: [snap(point.x), 0, snap(point.z)],
+    position: [snap(point.x), getLevelY(level), snap(point.z)],
     rotationY: 0,
+    level,
     width: templateRoom.width,
     depth: templateRoom.depth,
     wallColor: templateRoom.wallColor,
@@ -1128,8 +1151,9 @@ function placeRoomTemplate(asset, point, recordHistory = true) {
       material: item.material || itemAsset.material,
       variant: item.variant || defaultVariantForKind(itemAsset.kind),
       scale: item.scale || 1,
-      position: [snap(roomCenter.x + item.x), 0, snap(roomCenter.z + item.z)],
+      position: [snap(roomCenter.x + item.x), getLevelY(level), snap(roomCenter.z + item.z)],
       rotationY: item.rotationY ?? rememberedRotation(itemAsset.kind),
+      level,
       width: itemAsset.width || templateRoom.width,
       depth: itemAsset.depth || templateRoom.depth,
       wallColor: itemAsset.color || templateRoom.wallColor,
@@ -1148,6 +1172,7 @@ function placeRoomTemplate(asset, point, recordHistory = true) {
 
   rebuildRoomShells();
   selectObject(roomEntry.uid);
+  updateLevelVisibility();
   state.activeAssetId = null;
   clearPlacementPreview();
   renderAssetPanel();
@@ -1159,6 +1184,8 @@ function createAssetGroup(entry) {
   const group = new THREE.Group();
   group.userData.uid = entry.uid;
   group.userData.selectable = true;
+  entry.level = entry.level || levelFromY(entry.position?.[1] || 0);
+  entry.position = [entry.position?.[0] || 0, getLevelY(entry.level), entry.position?.[2] || 0];
   group.position.fromArray(entry.position);
   group.rotation.y = entry.rotationY;
   group.scale.setScalar(entry.scale);
@@ -1754,29 +1781,39 @@ function createBathAsset(group, entry) {
 function createStructureAsset(group, entry) {
   if (entry.kind === "stairs" || entry.kind === "wide-stairs") {
     const wide = entry.kind === "wide-stairs";
-    const landing = (entry.variant || "straight") === "landing";
-    const steps = landing ? (wide ? 7 : 5) : wide ? 10 : 6;
+    const variant = entry.variant || "straight";
+    const landing = variant === "landing";
+    const fullStory = variant === "second-floor";
+    const steps = fullStory ? 14 : landing ? (wide ? 7 : 5) : wide ? 10 : 6;
     const treadWidth = wide ? 2.2 : 1.25;
+    const rise = fullStory ? LEVEL_HEIGHT / steps : 0.16;
+    const run = fullStory ? 0.38 : 0.32;
     for (let i = 0; i < steps; i += 1) {
-      addBox(group, [treadWidth, 0.16, 0.42], [0, 0.08 + i * 0.16, -1.15 + i * 0.32], makeMat(entry.color, entry.material), "Stair tread");
+      addBox(group, [treadWidth, Math.max(0.12, rise * 0.62), 0.42], [0, rise / 2 + i * rise, -1.15 + i * run], makeMat(entry.color, entry.material), "Stair tread");
+    }
+    if (fullStory) {
+      addBox(group, [treadWidth + 0.35, 0.18, 1.05], [0, LEVEL_HEIGHT + 0.02, -1.15 + steps * run + 0.22], makeMat(entry.color, entry.material), "Second level stair landing");
+      addBox(group, [0.08, 1.05, steps * run + 0.9], [-treadWidth / 2 - 0.22, LEVEL_HEIGHT / 2, -1.05 + (steps * run) / 2], makeMat("#8d5a35", "wood"), "Stair rail");
+      addBox(group, [0.08, 1.05, steps * run + 0.9], [treadWidth / 2 + 0.22, LEVEL_HEIGHT / 2, -1.05 + (steps * run) / 2], makeMat("#8d5a35", "wood"), "Stair rail");
     }
     if (landing) {
-      addBox(group, [treadWidth, 0.18, 1.05], [0, 0.18 + steps * 0.16, -1.15 + steps * 0.32 + 0.32], makeMat(entry.color, entry.material), "Stair landing");
+      addBox(group, [treadWidth, 0.18, 1.05], [0, 0.18 + steps * rise, -1.15 + steps * run + 0.32], makeMat(entry.color, entry.material), "Stair landing");
       for (let i = 0; i < 4; i += 1) {
-        addBox(group, [0.46, 0.14, treadWidth], [-0.54 + i * 0.36, 0.36 + steps * 0.16 + i * 0.14, -1.15 + steps * 0.32 + 1.03], makeMat(entry.color, entry.material), "Return stair tread");
+        addBox(group, [0.46, 0.14, treadWidth], [-0.54 + i * 0.36, 0.36 + steps * rise + i * 0.14, -1.15 + steps * run + 1.03], makeMat(entry.color, entry.material), "Return stair tread");
       }
     }
-    if (wide) {
+    if (wide && !fullStory) {
       addBox(group, [0.08, 1.42, 3.2], [-1.18, 0.72, 0.18], makeMat("#8d5a35", "wood"), "Stair rail");
       addBox(group, [0.08, 1.42, 3.2], [1.18, 0.72, 0.18], makeMat("#8d5a35", "wood"), "Stair rail");
     }
   } else if (entry.kind === "stair-landing") {
     const width = entry.width || 2.2;
     const depth = entry.depth || 1.8;
-    addBox(group, [width, 0.22, depth], [0, 1.02, 0], makeMat(entry.color, entry.material), "Second floor landing");
-    addBox(group, [width, 0.1, 0.1], [0, 1.4, -depth / 2 + 0.08], makeMat("#8d5a35", "wood"), "Landing rail");
-    addBox(group, [0.1, 0.75, depth], [-width / 2 + 0.08, 1.28, 0], makeMat("#8d5a35", "wood"), "Landing side rail");
-    addBox(group, [0.1, 0.75, depth], [width / 2 - 0.08, 1.28, 0], makeMat("#8d5a35", "wood"), "Landing side rail");
+    const baseY = entry.level > 1 ? 0.08 : 1.02;
+    addBox(group, [width, 0.22, depth], [0, baseY, 0], makeMat(entry.color, entry.material), "Second floor landing");
+    addBox(group, [width, 0.1, 0.1], [0, baseY + 0.38, -depth / 2 + 0.08], makeMat("#8d5a35", "wood"), "Landing rail");
+    addBox(group, [0.1, 0.75, depth], [-width / 2 + 0.08, baseY + 0.26, 0], makeMat("#8d5a35", "wood"), "Landing side rail");
+    addBox(group, [0.1, 0.75, depth], [width / 2 - 0.08, baseY + 0.26, 0], makeMat("#8d5a35", "wood"), "Landing side rail");
   } else if (entry.kind === "front-door") {
     createDoor(group, entry);
     addBox(group, [0.18, 0.08, 0.08], [-0.22, 1.05, 0.33], makeMat("#d0aa5b", "metal"), "Door knob");
@@ -2228,7 +2265,7 @@ function moveRoomContentsWithDrag() {
   const delta = dragState.entry.group.position.clone().sub(dragState.roomStart);
   dragState.roomContents.forEach(({ entry, position }) => {
     entry.group.position.copy(position).add(delta);
-    entry.group.position.y = 0;
+    entry.group.position.y = getLevelY(entry.level || dragState.entry.level || 1);
     syncEntry(entry);
   });
 }
@@ -2238,7 +2275,7 @@ function moveSelectedWithDrag() {
   const delta = dragState.entry.group.position.clone().sub(dragState.startPosition);
   dragState.selectedStarts.forEach(({ entry, position }) => {
     entry.group.position.copy(position).add(delta);
-    entry.group.position.y = 0;
+    entry.group.position.y = getLevelY(entry.level || 1);
     clampEntryToRoom(entry);
     syncEntry(entry);
   });
@@ -2335,7 +2372,7 @@ function getLineBuildSpecs(asset, start, end, spacing) {
     const x = alongX ? THREE.MathUtils.lerp(start.x, end.x, t) : start.x;
     const z = alongX ? start.z : THREE.MathUtils.lerp(start.z, end.z, t);
     specs.push({
-      position: [snap(x), 0, snap(z)],
+      position: [snap(x), getLevelY(state.activeLevel || 1), snap(z)],
       rotationY: asset.kind === "fence" ? (alongX ? 0 : Math.PI / 2) : rememberedRotation(asset.kind),
     });
   }
@@ -2343,7 +2380,7 @@ function getLineBuildSpecs(asset, start, end, spacing) {
 }
 
 function getInteriorWallSpec(asset, start, end, buildGroupId = null) {
-  const room = findContainingRoomBounds(start, -0.02) || findContainingRoomBounds(end, -0.02);
+  const room = findContainingRoomBounds(start, -0.02, state.activeLevel) || findContainingRoomBounds(end, -0.02, state.activeLevel);
   if (!room) return null;
   const dx = end.x - start.x;
   const dz = end.z - start.z;
@@ -2363,14 +2400,15 @@ function getInteriorWallSpec(asset, start, end, buildGroupId = null) {
     : new THREE.Vector3(anchor.x, 0, THREE.MathUtils.clamp(anchor.z + direction * length, room.z - room.depth / 2 + margin, room.z + room.depth / 2 - margin));
   const finalLength = Math.max(alongX ? Math.abs(endPoint.x - anchor.x) : Math.abs(endPoint.z - anchor.z), minLength);
   const center = alongX
-    ? [snap((anchor.x + endPoint.x) / 2), 0, snap(anchor.z)]
-    : [snap(anchor.x), 0, snap((anchor.z + endPoint.z) / 2)];
+    ? [snap((anchor.x + endPoint.x) / 2), getLevelY(room.level || state.activeLevel || 1), snap(anchor.z)]
+    : [snap(anchor.x), getLevelY(room.level || state.activeLevel || 1), snap((anchor.z + endPoint.z) / 2)];
   return {
     position: center,
     rotationY: alongX ? 0 : Math.PI / 2,
     width: snap(finalLength),
     depth: WALL_THICKNESS,
     roomId: room.id,
+    level: room.level || state.activeLevel || 1,
     buildGroupId,
   };
 }
@@ -2400,7 +2438,7 @@ function snapPointToRoomSide(point, room, side, margin = 0.28) {
 function buildResizableOutdoorAsset(asset, start, end, buildGroupId = null) {
   const dx = end.x - start.x;
   const dz = end.z - start.z;
-  const center = [snap((start.x + end.x) / 2), 0, snap((start.z + end.z) / 2)];
+  const center = [snap((start.x + end.x) / 2), getLevelY(state.activeLevel || 1), snap((start.z + end.z) / 2)];
   let width = Math.max(Math.abs(dx), asset.width || 2, GRID_SIZE * 3);
   let depth = Math.max(Math.abs(dz), asset.depth || 2, GRID_SIZE * 3);
   if (asset.kind === "stone-walkway") {
@@ -2463,7 +2501,7 @@ function createPreviewEntriesForBuild(asset, start, end) {
   }
   const dx = end.x - start.x;
   const dz = end.z - start.z;
-  const center = new THREE.Vector3(snap((start.x + end.x) / 2), 0, snap((start.z + end.z) / 2));
+  const center = new THREE.Vector3(snap((start.x + end.x) / 2), getLevelY(state.activeLevel || 1), snap((start.z + end.z) / 2));
   let width = Math.max(Math.abs(dx), asset.width || 2, GRID_SIZE * 3);
   let depth = Math.max(Math.abs(dz), asset.depth || 2, GRID_SIZE * 3);
   if (asset.kind === "stone-walkway") {
@@ -2515,10 +2553,11 @@ function createRoomTemplatePreviewEntries(asset, point) {
 }
 
 function createPreviewEntry(asset, point, overrides = {}) {
-  const containingRoom = asset.kind === "roof" ? findNearestRoomClusterBounds(point) : findContainingRoomBounds(point);
+  const containingRoom = asset.kind === "roof" ? findNearestRoomClusterBounds(point, state.activeLevel) : findContainingRoomBounds(point, 0.25, state.activeLevel);
+  const entryLevel = overrides.level || containingRoom?.level || state.activeLevel || 1;
   const isRoomModule = asset.kind === "room-module";
   const isFreePlacement = isFreePlacementEntry(asset) || (!containingRoom && !isWallOpeningAsset(asset));
-  const placedPosition = asset.kind === "roof" && containingRoom ? [snap(containingRoom.x), 0, snap(containingRoom.z)] : [snap(point.x), 0, snap(point.z)];
+  const placedPosition = asset.kind === "roof" && containingRoom ? [snap(containingRoom.x), getLevelY(entryLevel), snap(containingRoom.z)] : [snap(point.x), getLevelY(entryLevel), snap(point.z)];
   const entry = {
     uid: `preview-${asset.id}-${crypto.randomUUID()}`,
     assetId: asset.id,
@@ -2530,6 +2569,7 @@ function createPreviewEntry(asset, point, overrides = {}) {
     scale: overrides.scale || 1,
     position: placedPosition,
     rotationY: overrides.rotationY ?? rememberedRotation(asset.kind),
+    level: entryLevel,
     width: overrides.width || (asset.kind === "roof" && containingRoom ? containingRoom.width + ROOF_OVERHANG : asset.width || state.room.width),
     depth: overrides.depth || (asset.kind === "roof" && containingRoom ? containingRoom.depth + ROOF_OVERHANG : asset.depth || state.room.depth),
     wallColor: overrides.wallColor || asset.color || state.room.wallColor,
@@ -2555,7 +2595,7 @@ function showPlacementPreview(entries, bounds) {
   });
   placementPreviewGroup.visible = true;
   placementPreviewGrid.visible = true;
-  placementPreviewGrid.position.set(bounds.x, 0.13, bounds.z);
+  placementPreviewGrid.position.set(bounds.x, bounds.y + 0.13, bounds.z);
   placementPreviewGrid.scale.set(Math.max(bounds.width, GRID_SIZE), Math.max(bounds.depth, GRID_SIZE), 1);
   state.preview.visible = true;
   state.preview.count = entries.length;
@@ -2603,6 +2643,7 @@ function getPreviewBounds(entries) {
   box.getSize(size);
   return {
     x: snap(center.x),
+    y: center.y,
     z: snap(center.z),
     width: Math.max(snap(size.x + GRID_SIZE), GRID_SIZE),
     depth: Math.max(snap(size.z + GRID_SIZE), GRID_SIZE),
@@ -2621,6 +2662,7 @@ function addBuiltEntry(asset, position, overrides = {}) {
     scale: overrides.scale || 1,
     position,
     rotationY: overrides.rotationY ?? rememberedRotation(asset.kind),
+    level: overrides.level || state.activeLevel || 1,
     width: overrides.width || asset.width || state.room.width,
     depth: overrides.depth || asset.depth || state.room.depth,
     wallColor: asset.color || state.room.wallColor,
@@ -2630,12 +2672,14 @@ function addBuiltEntry(asset, position, overrides = {}) {
     buildGroupId: overrides.buildGroupId || null,
     locked: false,
   };
+  entry.position[1] = getLevelY(entry.level);
   entry.group = createAssetGroup(entry);
   scene.add(entry.group);
   state.objects.push(entry);
   clampEntryToRoom(entry);
   syncEntry(entry);
   rememberRotation(entry);
+  updateLevelVisibility();
   return entry;
 }
 
@@ -2842,7 +2886,7 @@ function pasteCopied() {
   const copy = {
     ...state.clipboard,
     uid: crypto.randomUUID(),
-    position: [snap(state.clipboard.position[0] + GRID_SIZE * 3), 0, snap(state.clipboard.position[2] + GRID_SIZE * 3)],
+    position: [snap(state.clipboard.position[0] + GRID_SIZE * 3), getLevelY(state.clipboard.level || 1), snap(state.clipboard.position[2] + GRID_SIZE * 3)],
     roomCluster: state.clipboard.roomCluster ? [...state.clipboard.roomCluster] : undefined,
     locked: false,
   };
@@ -2855,7 +2899,7 @@ function createEntryCopy(entry, offsetX = GRID_SIZE * 2, offsetZ = GRID_SIZE * 2
   return {
     ...stripRuntimeFields(entry),
     uid: crypto.randomUUID(),
-    position: [snap(entry.position[0] + offsetX), 0, snap(entry.position[2] + offsetZ)],
+    position: [snap(entry.position[0] + offsetX), getLevelY(entry.level || 1), snap(entry.position[2] + offsetZ)],
     roomCluster: entry.roomCluster ? [...entry.roomCluster] : undefined,
     locked: false,
   };
@@ -3109,6 +3153,7 @@ function serialize() {
     scale: 1,
     position: [0, 0, 0],
     rotationY: state.room.rotationY || roomGroup.rotation.y || 0,
+    level: 1,
     locked: Boolean(state.room.locked),
     width: state.room.width,
     depth: state.room.depth,
@@ -3123,6 +3168,8 @@ function serialize() {
     viewMode: state.viewMode,
     shellClosed: state.shellClosed,
     roofsVisible: state.roofsVisible,
+    activeLevel: state.activeLevel,
+    showAllLevels: state.showAllLevels,
     highFidelity: state.highFidelity,
     objects: state.objects.map((entry) => ({
       uid: entry.uid,
@@ -3133,6 +3180,7 @@ function serialize() {
       scale: entry.scale,
       position: entry.position,
       rotationY: entry.rotationY,
+      level: entry.level || 1,
       width: entry.width,
       depth: entry.depth,
       wallColor: entry.wallColor,
@@ -3168,6 +3216,7 @@ function deserialize(payload, recordHistory = true) {
     scale: 1,
     position: [0, 0, 0],
     rotationY: payload.room?.rotationY || 0,
+    level: 1,
     locked: payload.room?.locked ?? true,
     width: payload.room?.width || 12,
     depth: payload.room?.depth || 10,
@@ -3180,6 +3229,8 @@ function deserialize(payload, recordHistory = true) {
   state.highFidelity = Boolean(payload.highFidelity);
   state.shellClosed = Boolean(payload.shellClosed);
   state.roofsVisible = payload.roofsVisible ?? true;
+  state.activeLevel = payload.activeLevel || 1;
+  state.showAllLevels = payload.showAllLevels ?? true;
   fidelityToggle.classList.toggle("active", state.highFidelity);
   document.querySelector("#shell-view").classList.toggle("active", state.shellClosed);
   roofsToggleBtn.classList.toggle("active", state.roofsVisible);
@@ -3200,6 +3251,7 @@ function deserialize(payload, recordHistory = true) {
       scale: item.scale || 1,
       position: item.position || [0, 0, 0],
       rotationY: item.rotationY || 0,
+      level: item.level || levelFromY(item.position?.[1] || 0),
       width: item.width || asset.width || state.room.width,
       depth: item.depth || asset.depth || state.room.depth,
       wallColor: item.wallColor || asset.color || state.room.wallColor,
@@ -3218,6 +3270,8 @@ function deserialize(payload, recordHistory = true) {
     clampEntryToRoom(entry);
   });
   rebuildRoomShells();
+  updateLevelUi();
+  updateLevelVisibility();
   setViewMode(payload.viewMode || "iso", false);
   updateInspector();
   if (recordHistory) pushHistory();
@@ -3243,7 +3297,7 @@ function setViewMode(mode, announce = true) {
     state.activeAssetId = null;
     renderAssetPanel();
     const clampedZ = THREE.MathUtils.clamp(state.room.depth / 2 - 0.55, -state.room.depth / 2 + 0.55, state.room.depth / 2 - 0.55);
-    camera.position.set(0, 1.55, clampedZ);
+    camera.position.set(0, getLevelY(state.activeLevel || 1) + 1.55, clampedZ);
     walkState.yaw = 0;
     walkState.pitch = 0;
     applyWalkCameraRotation();
@@ -3267,6 +3321,41 @@ function setViewMode(mode, announce = true) {
     const label = mode === "walk" ? "Walk mode: click the room canvas, then use arrows or WASD and mouse look." : mode === "tour" ? "Overhead tour: slow rotating property capture view." : `${mode === "top" ? "Top" : "Isometric"} view`;
     flashHint(label);
   }
+}
+
+function setActiveLevel(level, announce = true) {
+  state.activeLevel = THREE.MathUtils.clamp(level, 1, 2);
+  updateLevelUi();
+  updateLevelVisibility();
+  clearPlacementPreview();
+  if (state.viewMode === "walk") {
+    const clampedZ = THREE.MathUtils.clamp(state.room.depth / 2 - 0.55, -state.room.depth / 2 + 0.55, state.room.depth / 2 - 0.55);
+    camera.position.set(0, getLevelY(state.activeLevel) + 1.55, clampedZ);
+    applyWalkCameraRotation();
+  }
+  if (announce) flashHint(`Level ${state.activeLevel} active. New rooms and items place on this story.`);
+}
+
+function toggleAllLevels() {
+  state.showAllLevels = !state.showAllLevels;
+  updateLevelUi();
+  updateLevelVisibility();
+  flashHint(state.showAllLevels ? "Showing all levels." : `Showing Level ${state.activeLevel} only.`);
+}
+
+function updateLevelUi() {
+  levelOneBtn.classList.toggle("active", state.activeLevel === 1);
+  levelTwoBtn.classList.toggle("active", state.activeLevel === 2);
+  levelsAllBtn.classList.toggle("active", state.showAllLevels);
+}
+
+function updateLevelVisibility() {
+  const visibleForLevel = (level) => state.showAllLevels || level === state.activeLevel;
+  roomGroup.visible = visibleForLevel(1);
+  state.objects.forEach((entry) => {
+    if (entry.group) entry.group.visible = visibleForLevel(entry.level || 1) && (entry.kind !== "roof" || state.roofsVisible);
+  });
+  updateSelectionHelper();
 }
 
 function toggleTourMode() {
@@ -3307,9 +3396,7 @@ function setToolMode(mode, announce = true) {
 }
 
 function updateRoofVisibility() {
-  state.objects.filter((entry) => entry.kind === "roof").forEach((entry) => {
-    if (entry.group) entry.group.visible = state.roofsVisible;
-  });
+  updateLevelVisibility();
 }
 
 function clearHiddenRoofSelection() {
@@ -3359,7 +3446,7 @@ function updateWalk(delta) {
     camera.position.x = THREE.MathUtils.clamp(nextPosition.x, currentRoom.x - currentRoom.width / 2 + 0.35, currentRoom.x + currentRoom.width / 2 - 0.35);
     camera.position.z = THREE.MathUtils.clamp(nextPosition.z, currentRoom.z - currentRoom.depth / 2 + 0.35, currentRoom.z + currentRoom.depth / 2 - 0.35);
   }
-  camera.position.y = 1.55;
+  camera.position.y = getLevelY(levelFromY(camera.position.y)) + 1.55;
 }
 
 function getSelectedRoomEntry() {
@@ -3424,18 +3511,21 @@ function snapRoomModule(entry) {
   if (!isRoomEntry(entry)) return;
   entry.group.position.x = snap(entry.group.position.x);
   entry.group.position.z = snap(entry.group.position.z);
+  entry.level = entry.level || levelFromY(entry.group.position.y);
+  entry.group.position.y = getLevelY(entry.level);
   const roomHalfW = (entry.width || 4) / 2;
   const roomHalfD = (entry.depth || 4) / 2;
   const snapDistance = 0.75;
   const anchorRooms = [
-    { id: "main", x: 0, z: 0, width: state.room.width, depth: state.room.depth },
+    ...(entry.level === 1 ? [{ id: "main", x: 0, z: 0, width: state.room.width, depth: state.room.depth }] : []),
     ...state.objects.filter((candidate) => candidate.uid !== entry.uid && isRoomEntry(candidate)).map((candidate) => ({
       id: candidate.uid,
       x: candidate.group.position.x,
       z: candidate.group.position.z,
+      level: candidate.level || levelFromY(candidate.group.position.y),
       width: candidate.width || 4,
       depth: candidate.depth || 4,
-    })),
+    })).filter((room) => room.level === entry.level),
   ];
   const targets = anchorRooms.flatMap((room) => {
     const anchorHalfW = room.width / 2;
@@ -3454,7 +3544,7 @@ function snapRoomModule(entry) {
     { x: entry.group.position.x, z: entry.group.position.z, width: entry.width || 4, depth: entry.depth || 4 },
     room,
   ));
-  if (nearest.distance < snapDistance || overlapsAnchor) {
+  if (nearest && (nearest.distance < snapDistance || overlapsAnchor)) {
     entry.group.position.x = nearest.x;
     entry.group.position.z = nearest.z;
   }
@@ -3475,7 +3565,8 @@ function toggleHighFidelity() {
 function eventToGroundPoint(event) {
   setPointer(event);
   raycaster.setFromCamera(pointer, camera);
-  return raycaster.ray.intersectPlane(groundPlane, hitPoint)?.clone();
+  activeLevelPlane.constant = -getLevelY(state.activeLevel || 1);
+  return raycaster.ray.intersectPlane(activeLevelPlane, hitPoint)?.clone();
 }
 
 function setPointer(event) {
@@ -3503,11 +3594,14 @@ function canPlaceAsset(assetId, point) {
   return Math.abs(point.x) < LOT_LIMIT && Math.abs(point.z) < LOT_LIMIT;
 }
 
-function findContainingRoomBounds(point, margin = 0.25) {
+function findContainingRoomBounds(point, margin = 0.25, level = null) {
+  const targetLevel = level || levelFromY(point?.y || 0);
   const base = {
     id: "main",
     x: 0,
     z: 0,
+    y: 0,
+    level: 1,
     width: state.room.width,
     depth: state.room.depth,
   };
@@ -3516,11 +3610,13 @@ function findContainingRoomBounds(point, margin = 0.25) {
     ...state.objects.filter(isRoomEntry).map((entry) => ({
       id: entry.uid,
       x: entry.group.position.x,
+      y: entry.group.position.y,
       z: entry.group.position.z,
+      level: entry.level || levelFromY(entry.group.position.y),
       width: entry.width || 4,
       depth: entry.depth || 4,
     })),
-  ];
+  ].filter((room) => room.level === targetLevel);
   return rooms.find(
     (room) =>
       point.x >= room.x - room.width / 2 + margin &&
@@ -3530,15 +3626,18 @@ function findContainingRoomBounds(point, margin = 0.25) {
   );
 }
 
-function findNearestRoomBounds(point) {
+function findNearestRoomBounds(point, level = null) {
+  const targetLevel = level || levelFromY(point?.y || 0);
   return getAllRoomBounds()
+    .filter((room) => room.level === targetLevel)
     .map((room) => ({ ...room, distance: Math.hypot(point.x - room.x, point.z - room.z) }))
     .sort((a, b) => a.distance - b.distance)[0];
 }
 
-function findNearestRoomClusterBounds(point) {
-  const rooms = getAllRoomBounds();
-  const seed = findNearestRoomBounds(point);
+function findNearestRoomClusterBounds(point, level = null) {
+  const targetLevel = level || levelFromY(point?.y || 0);
+  const rooms = getAllRoomBounds().filter((room) => room.level === targetLevel);
+  const seed = findNearestRoomBounds(point, targetLevel);
   if (!seed) return null;
   const cluster = collectConnectedRooms(seed, rooms);
   const minX = Math.min(...cluster.map((room) => room.x - room.width / 2));
@@ -3547,6 +3646,7 @@ function findNearestRoomClusterBounds(point) {
   const maxZ = Math.max(...cluster.map((room) => room.z + room.depth / 2));
   return {
     id: seed.id,
+    level: targetLevel,
     roomIds: cluster.map((room) => room.id),
     x: (minX + maxX) / 2,
     z: (minZ + maxZ) / 2,
@@ -3557,11 +3657,13 @@ function findNearestRoomClusterBounds(point) {
 
 function getAllRoomBounds() {
   return [
-    { id: "main", x: 0, z: 0, width: state.room.width, depth: state.room.depth },
+    { id: "main", x: 0, y: 0, z: 0, level: 1, width: state.room.width, depth: state.room.depth },
     ...state.objects.filter(isRoomEntry).map((entry) => ({
       id: entry.uid,
       x: entry.group.position.x,
+      y: entry.group.position.y,
       z: entry.group.position.z,
+      level: entry.level || levelFromY(entry.group.position.y),
       width: entry.width || 4,
       depth: entry.depth || 4,
     })),
@@ -3595,25 +3697,28 @@ function doRoomBoundsOverlap(a, b) {
 }
 
 function getEntryRoomBounds(entry) {
+  const level = entry?.level || levelFromY(entry?.group?.position.y || entry?.position?.[1] || 0);
   if (!entry?.roomId || entry.roomId === "main") {
-    return { id: "main", x: 0, z: 0, width: state.room.width, depth: state.room.depth };
+    return { id: "main", x: 0, y: 0, z: 0, level: 1, width: state.room.width, depth: state.room.depth };
   }
   const room = state.objects.find((candidate) => candidate.uid === entry.roomId && isRoomEntry(candidate));
-  if (!room) return { id: "main", x: 0, z: 0, width: state.room.width, depth: state.room.depth };
+  if (!room) return { id: "main", x: 0, y: getLevelY(level), z: 0, level, width: state.room.width, depth: state.room.depth };
   return {
     id: room.uid,
     x: room.group.position.x,
+    y: room.group.position.y,
     z: room.group.position.z,
+    level: room.level || levelFromY(room.group.position.y),
     width: room.width || 4,
     depth: room.depth || 4,
   };
 }
 
 function getRoomBoundsById(roomId) {
-  if (!roomId || roomId === "main") return { id: "main", x: 0, z: 0, width: state.room.width, depth: state.room.depth };
+  if (!roomId || roomId === "main") return { id: "main", x: 0, y: 0, z: 0, level: 1, width: state.room.width, depth: state.room.depth };
   const room = state.objects.find((entry) => entry.uid === roomId && isRoomEntry(entry));
   if (!room) return null;
-  return { id: room.uid, x: room.group.position.x, z: room.group.position.z, width: room.width || 4, depth: room.depth || 4 };
+  return { id: room.uid, x: room.group.position.x, y: room.group.position.y, z: room.group.position.z, level: room.level || levelFromY(room.group.position.y), width: room.width || 4, depth: room.depth || 4 };
 }
 
 function canWalkToPosition(currentPosition, nextPosition) {
@@ -3803,7 +3908,7 @@ function clampEntryToRoom(entry) {
     }
     entry.group.position.x = snap(THREE.MathUtils.clamp(entry.group.position.x, -LOT_LIMIT, LOT_LIMIT));
     entry.group.position.z = snap(THREE.MathUtils.clamp(entry.group.position.z, -LOT_LIMIT, LOT_LIMIT));
-    entry.group.position.y = 0;
+    entry.group.position.y = getLevelY(entry.level || 1);
     syncEntry(entry);
     return;
   }
@@ -3826,7 +3931,7 @@ function clampEntryToRoom(entry) {
     }
     entry.group.position.x = snap(THREE.MathUtils.clamp(entry.group.position.x, -LOT_LIMIT, LOT_LIMIT));
     entry.group.position.z = snap(THREE.MathUtils.clamp(entry.group.position.z, -LOT_LIMIT, LOT_LIMIT));
-    entry.group.position.y = 0;
+    entry.group.position.y = getLevelY(entry.level || 1);
     syncEntry(entry);
     return;
   }
@@ -3835,7 +3940,7 @@ function clampEntryToRoom(entry) {
   const room = getEntryRoomBounds(entry);
   entry.group.position.x = THREE.MathUtils.clamp(entry.group.position.x, room.x - room.width / 2 + margin, room.x + room.width / 2 - margin);
   entry.group.position.z = THREE.MathUtils.clamp(entry.group.position.z, room.z - room.depth / 2 + margin, room.z + room.depth / 2 - margin);
-  entry.group.position.y = 0;
+  entry.group.position.y = getLevelY(entry.level || 1);
   syncEntry(entry);
 }
 
@@ -3851,7 +3956,7 @@ function snapInteriorWallToRoom(entry) {
     entry.group.position.x = snap(THREE.MathUtils.clamp(entry.group.position.x, room.x - room.width / 2 + margin, room.x + room.width / 2 - margin));
     entry.group.position.z = snap(THREE.MathUtils.clamp(entry.group.position.z, room.z - room.depth / 2 + length / 2, room.z + room.depth / 2 - length / 2));
   }
-  entry.group.position.y = 0;
+  entry.group.position.y = getLevelY(entry.level || 1);
   syncEntry(entry);
 }
 
@@ -3883,7 +3988,7 @@ function snapEntryToWall(entry, createsOpening = false) {
   entry.group.position.z = ["front", "back"].includes(wall.side)
     ? wall.z
     : THREE.MathUtils.clamp(wall.z, room.z - room.depth / 2 + depthMargin, room.z + room.depth / 2 - depthMargin);
-  entry.group.position.y = 0;
+  entry.group.position.y = getLevelY(entry.level || room.level || 1);
   entry.group.rotation.y = wall.rotationY;
   entry.wallSide = wall.side;
   entry.wallOffset = ["left", "right"].includes(wall.side) ? entry.group.position.z - room.z : entry.group.position.x - room.x;
@@ -3900,12 +4005,13 @@ function hasAdjacentRoomOnSide(room, side) {
 }
 
 function snapRoofToNearestRoom(entry) {
-  const cluster = findNearestRoomClusterBounds(entry.group.position);
+  const cluster = findNearestRoomClusterBounds(entry.group.position, entry.level || levelFromY(entry.group.position.y));
   if (!cluster) return;
   entry.width = cluster.width + ROOF_OVERHANG;
   entry.depth = cluster.depth + ROOF_OVERHANG;
   entry.roomCluster = cluster.roomIds;
-  entry.group.position.set(snap(cluster.x), 0, snap(cluster.z));
+  entry.level = cluster.level || entry.level || 1;
+  entry.group.position.set(snap(cluster.x), getLevelY(entry.level), snap(cluster.z));
   rebuildEntry(entry);
   syncEntry(entry);
 }
@@ -3915,9 +4021,12 @@ function syncEntry(entry) {
     entry.group = roomGroup;
     entry.position = [0, 0, 0];
     entry.rotationY = roomGroup.rotation.y;
+    entry.level = 1;
     entry.scale = 1;
     return;
   }
+  entry.level = entry.level || levelFromY(entry.group.position.y);
+  entry.group.position.y = getLevelY(entry.level);
   entry.position = entry.group.position.toArray();
   entry.rotationY = entry.group.rotation.y;
   entry.scale = entry.group.scale.x;
@@ -3941,6 +4050,7 @@ function getMainRoomEntry() {
   state.room.group = roomGroup;
   state.room.position = [0, 0, 0];
   state.room.rotationY = roomGroup.rotation.y;
+  state.room.level = 1;
   state.room.scale = 1;
   state.room.color = state.room.wallColor;
   return state.room;
@@ -4267,6 +4377,14 @@ function snap(value) {
   return Math.round(value / GRID_SIZE) * GRID_SIZE;
 }
 
+function getLevelY(level = 1) {
+  return (Math.max(1, level) - 1) * LEVEL_HEIGHT;
+}
+
+function levelFromY(y = 0) {
+  return Math.max(1, Math.round(y / LEVEL_HEIGHT) + 1);
+}
+
 function formatLength(meters) {
   const totalInches = Math.max(0, Math.round(meters * 39.3701));
   const feet = Math.floor(totalInches / 12);
@@ -4290,6 +4408,8 @@ window.render_game_to_text = () => {
     mode: state.viewMode,
     shellClosed: state.shellClosed,
     roofsVisible: state.roofsVisible,
+    activeLevel: state.activeLevel,
+    showAllLevels: state.showAllLevels,
     room: {
       width: state.room.width,
       depth: state.room.depth,
@@ -4299,6 +4419,7 @@ window.render_game_to_text = () => {
       floorColor: state.room.floorColor,
       exteriorMaterial: state.room.exteriorMaterial,
       rotationY: Number((state.room.rotationY || 0).toFixed(2)),
+      level: 1,
       locked: Boolean(state.room.locked),
     },
     project: {
@@ -4311,6 +4432,7 @@ window.render_game_to_text = () => {
       width: entry.width,
       depth: entry.depth,
       position: entry.position.map((value) => Number(value.toFixed(2))),
+      level: entry.level || 1,
     })),
     activeAsset: state.activeAssetId,
     toolMode: state.toolMode,
@@ -4364,6 +4486,7 @@ window.render_game_to_text = () => {
       kind: entry.kind,
       position: entry.position.map((value) => Number(value.toFixed(2))),
       rotationY: Number(entry.rotationY.toFixed(2)),
+      level: entry.level || 1,
       scale: Number(entry.scale.toFixed(2)),
       variant: entry.variant || null,
       width: entry.width ? Number(entry.width.toFixed(2)) : null,
