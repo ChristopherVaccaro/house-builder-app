@@ -25,6 +25,7 @@ const duplicateBtn = document.querySelector("#duplicate-btn");
 const deleteBtn = document.querySelector("#delete-btn");
 const tourViewBtn = document.querySelector("#tour-view");
 const roofsToggleBtn = document.querySelector("#roofs-toggle");
+const dozerBtn = document.querySelector("#dozer-btn");
 const projectModal = document.querySelector("#project-modal");
 const projectModalTitle = document.querySelector("#project-modal-title");
 const projectNameRow = document.querySelector("#project-name-row");
@@ -43,6 +44,7 @@ const LOT_LIMIT = 60;
 const ROOF_OVERHANG = 1.2;
 const EXTERIOR_MATERIAL_TYPES = new Set(["siding", "brick", "stone", "shingles"]);
 const MAIN_ROOM_ID = "main-room";
+const DRAG_BUILD_KINDS = new Set(["fence", "patio", "stone-walkway", "deck"]);
 
 const ASSETS = [
   { id: "template-kitchen", label: "Kitchen Template", category: "rooms", kind: "room-template", color: "#d7cab4", material: "painted", width: 7, depth: 5.5 },
@@ -290,6 +292,16 @@ const state = {
   selectedIds: new Set(),
   lastRotationByKind: {},
   lastRoomExteriorMaterial: "siding",
+  toolMode: "select",
+  buildDrag: {
+    active: false,
+    assetId: null,
+    start: null,
+    current: null,
+    moved: false,
+  },
+  bulldozing: false,
+  bulldozeChanged: false,
 };
 
 const projectModalState = {
@@ -602,9 +614,10 @@ function renderAssetPanel() {
 
       button.addEventListener("click", () => {
         state.activeAssetId = asset.id;
+        setToolMode("select", false);
         selectObject(null);
         renderAssetPanel();
-        flashHint(`${asset.label} ready. Click once inside the room to place it.`);
+        flashHint(DRAG_BUILD_KINDS.has(asset.kind) ? `${asset.label} ready. Click once or drag to build.` : `${asset.label} ready. Click once inside the room to place it.`);
       });
       button.addEventListener("dragstart", (event) => {
         event.dataTransfer.setData("text/plain", asset.id);
@@ -893,6 +906,7 @@ function wireUi() {
   roofsToggleBtn.addEventListener("click", toggleRoofsVisible);
   tourViewBtn.addEventListener("click", toggleTourMode);
   fidelityToggle.addEventListener("click", toggleHighFidelity);
+  dozerBtn.addEventListener("click", () => setToolMode(state.toolMode === "bulldoze" ? "select" : "bulldoze"));
   projectPrimaryBtn.addEventListener("click", handleProjectPrimary);
   projectSecondaryBtn.addEventListener("click", closeProjectModal);
   projectCloseBtn.addEventListener("click", closeProjectModal);
@@ -911,6 +925,7 @@ function wireUi() {
       return;
     }
     if (event.key === "Delete" || event.key === "Backspace") deleteSelected();
+    if (event.key.toLowerCase() === "b") setToolMode(state.toolMode === "bulldoze" ? "select" : "bulldoze");
     if (event.key.toLowerCase() === "l") toggleSelectedLock();
     if (["r", "e", "]"].includes(event.key.toLowerCase())) rotateSelected(Math.PI / 8);
     if (["q", "["].includes(event.key.toLowerCase())) rotateSelected(-Math.PI / 8);
@@ -1725,11 +1740,11 @@ function createStructureAsset(group, entry) {
     const depth = entry.depth || 3.5;
     const variant = entry.variant || "gable";
     if (variant === "flat") {
-      addBox(group, [width, 0.28, depth], [0, ROOM_HEIGHT + 0.48, 0], makeMat(entry.color, entry.material), "Flat roof");
-      addBox(group, [width + 0.16, 0.12, 0.14], [0, ROOM_HEIGHT + 0.66, -depth / 2 + 0.12], makeMat(shadeHex(entry.color, 18), entry.material), "Roof lip");
-      addBox(group, [width + 0.16, 0.12, 0.14], [0, ROOM_HEIGHT + 0.66, depth / 2 - 0.12], makeMat(shadeHex(entry.color, 18), entry.material), "Roof lip");
+      addBox(group, [width, 0.28, depth], [0, ROOM_HEIGHT + 0.18, 0], makeMat(entry.color, entry.material), "Flat roof");
+      addBox(group, [width + 0.16, 0.12, 0.14], [0, ROOM_HEIGHT + 0.36, -depth / 2 + 0.12], makeMat(shadeHex(entry.color, 18), entry.material), "Roof lip");
+      addBox(group, [width + 0.16, 0.12, 0.14], [0, ROOM_HEIGHT + 0.36, depth / 2 - 0.12], makeMat(shadeHex(entry.color, 18), entry.material), "Roof lip");
     } else if (variant === "hip") {
-      const roofBaseY = ROOM_HEIGHT + 0.48;
+      const roofBaseY = ROOM_HEIGHT + 0.14;
       const front = addBox(group, [width, 0.22, depth * 0.52], [0, roofBaseY, depth * 0.18], makeMat(entry.color, entry.material), "Hip roof plane");
       front.rotation.x = 0.25;
       const back = addBox(group, [width, 0.22, depth * 0.52], [0, roofBaseY, -depth * 0.18], makeMat(shadeHex(entry.color, -18), entry.material), "Hip roof plane");
@@ -1746,8 +1761,8 @@ function createStructureAsset(group, entry) {
 }
 
 function createGableRoof(group, entry, width, depth) {
-  const eaveY = ROOM_HEIGHT + 0.42;
-  const ridgeY = ROOM_HEIGHT + Math.max(0.95, Math.min(1.45, depth * 0.13));
+  const eaveY = ROOM_HEIGHT + 0.08;
+  const ridgeY = ROOM_HEIGHT + Math.max(0.75, Math.min(1.2, depth * 0.11));
   const halfW = width / 2;
   const halfD = depth / 2;
   addRoofQuad(
@@ -1772,13 +1787,13 @@ function createGableRoof(group, entry, width, depth) {
     makeRoofMat(shadeHex(entry.color, -18), entry.material),
     "Front roof plane",
   );
-  addGableEnd(group, -halfW, eaveY, ridgeY, halfD, makeMat(shadeHex(entry.color, -12), entry.material));
-  addGableEnd(group, halfW, eaveY, ridgeY, halfD, makeMat(shadeHex(entry.color, -12), entry.material));
+  addGableEnd(group, -halfW, eaveY, ridgeY, halfD, makeRoofMat(shadeHex(entry.color, -12), entry.material));
+  addGableEnd(group, halfW, eaveY, ridgeY, halfD, makeRoofMat(shadeHex(entry.color, -12), entry.material));
   addBox(group, [width + 0.18, 0.12, 0.18], [0, ridgeY + 0.06, 0], makeMat(shadeHex(entry.color, 18), entry.material), "Roof ridge cap");
-  addBox(group, [width + 0.22, 0.16, 0.18], [0, eaveY - 0.06, -halfD + 0.04], makeMat("#f5ead5", "painted"), "Back fascia");
-  addBox(group, [width + 0.22, 0.16, 0.18], [0, eaveY - 0.06, halfD - 0.04], makeMat("#f5ead5", "painted"), "Front fascia");
-  addBox(group, [0.18, 0.16, depth + 0.08], [-halfW + 0.04, eaveY - 0.06, 0], makeMat("#f5ead5", "painted"), "Side fascia");
-  addBox(group, [0.18, 0.16, depth + 0.08], [halfW - 0.04, eaveY - 0.06, 0], makeMat("#f5ead5", "painted"), "Side fascia");
+  addBox(group, [width + 0.22, 0.24, 0.18], [0, eaveY - 0.1, -halfD + 0.04], makeMat("#f5ead5", "painted"), "Back fascia");
+  addBox(group, [width + 0.22, 0.24, 0.18], [0, eaveY - 0.1, halfD - 0.04], makeMat("#f5ead5", "painted"), "Front fascia");
+  addBox(group, [0.18, 0.24, depth + 0.08], [-halfW + 0.04, eaveY - 0.1, 0], makeMat("#f5ead5", "painted"), "Side fascia");
+  addBox(group, [0.18, 0.24, depth + 0.08], [halfW - 0.04, eaveY - 0.1, 0], makeMat("#f5ead5", "painted"), "Side fascia");
 }
 
 function makeRoofMat(color, material) {
@@ -1984,7 +1999,20 @@ function onPointerDown(event) {
     return;
   }
   const point = eventToGroundPoint(event);
+  if (state.toolMode === "bulldoze") {
+    state.bulldozing = true;
+    state.bulldozeChanged = false;
+    orbit.enabled = false;
+    renderer.domElement.setPointerCapture(event.pointerId);
+    bulldozeAtEvent(event);
+    return;
+  }
   if (point && state.activeAssetId && canPlaceAsset(state.activeAssetId, point)) {
+    const asset = ASSETS.find((entry) => entry.id === state.activeAssetId);
+    if (asset && DRAG_BUILD_KINDS.has(asset.kind)) {
+      startBuildDrag(event, asset, point);
+      return;
+    }
     placeAsset(state.activeAssetId, point);
     return;
   }
@@ -2044,6 +2072,17 @@ function onPointerMove(event) {
     applyWalkCameraRotation();
     return;
   }
+  if (state.bulldozing) {
+    bulldozeAtEvent(event);
+    return;
+  }
+  if (state.buildDrag.active) {
+    const point = eventToGroundPoint(event);
+    if (!point) return;
+    state.buildDrag.current = point.clone();
+    state.buildDrag.moved = state.buildDrag.moved || point.distanceTo(state.buildDrag.start) > GRID_SIZE * 2;
+    return;
+  }
   if (!dragState.entry) return;
   const point = eventToGroundPoint(event);
   if (!point) return;
@@ -2059,6 +2098,21 @@ function onPointerMove(event) {
 function onPointerUp(event) {
   if (state.viewMode === "walk") {
     walkState.draggingLook = false;
+    return;
+  }
+  if (state.bulldozing) {
+    if (renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId);
+    state.bulldozing = false;
+    orbit.enabled = true;
+    if (state.bulldozeChanged) {
+      pushHistory();
+      flashHint("Bulldozed selected pieces.");
+    }
+    state.bulldozeChanged = false;
+    return;
+  }
+  if (state.buildDrag.active) {
+    finishBuildDrag(event);
     return;
   }
   if (!dragState.entry) return;
@@ -2122,6 +2176,124 @@ function snapSelectedDragEntries() {
     clampEntryToRoom(entry);
     syncEntry(entry);
   });
+}
+
+function startBuildDrag(event, asset, point) {
+  state.buildDrag = {
+    active: true,
+    assetId: asset.id,
+    start: point.clone(),
+    current: point.clone(),
+    moved: false,
+  };
+  orbit.enabled = false;
+  renderer.domElement.setPointerCapture(event.pointerId);
+  flashHint(`${asset.label}: drag to build, release to place.`);
+}
+
+function finishBuildDrag(event) {
+  if (renderer.domElement.hasPointerCapture(event.pointerId)) renderer.domElement.releasePointerCapture(event.pointerId);
+  const releasePoint = eventToGroundPoint(event);
+  const { assetId, start, current, moved } = state.buildDrag;
+  const end = releasePoint || current;
+  resetBuildDrag();
+  orbit.enabled = true;
+  const asset = ASSETS.find((entry) => entry.id === assetId);
+  if (!asset || !start) return;
+  const dragDistance = end ? end.distanceTo(start) : 0;
+  if ((!moved && dragDistance < GRID_SIZE * 2) || !end) {
+    placeAsset(assetId, start);
+    return;
+  }
+  const entries = asset.kind === "fence" ? buildFenceRun(asset, start, end) : buildResizableOutdoorAsset(asset, start, end);
+  if (!entries.length) return;
+  state.activeAssetId = null;
+  renderAssetPanel();
+  selectObject(entries.at(-1).uid);
+  pushHistory();
+  flashHint(`${entries.length} ${asset.label}${entries.length === 1 ? "" : "s"} built.`);
+}
+
+function resetBuildDrag() {
+  state.buildDrag = {
+    active: false,
+    assetId: null,
+    start: null,
+    current: null,
+    moved: false,
+  };
+}
+
+function buildFenceRun(asset, start, end) {
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const alongX = Math.abs(dx) >= Math.abs(dz);
+  const length = Math.max(Math.abs(alongX ? dx : dz), 0.75);
+  const segmentSpacing = 2.35;
+  const count = Math.max(1, Math.floor(length / segmentSpacing) + 1);
+  const entries = [];
+  for (let index = 0; index < count; index += 1) {
+    const t = count === 1 ? 0 : index / (count - 1);
+    const x = alongX ? THREE.MathUtils.lerp(start.x, end.x, t) : start.x;
+    const z = alongX ? start.z : THREE.MathUtils.lerp(start.z, end.z, t);
+    entries.push(addBuiltEntry(asset, [snap(x), 0, snap(z)], { rotationY: alongX ? 0 : Math.PI / 2 }));
+  }
+  return entries;
+}
+
+function buildResizableOutdoorAsset(asset, start, end) {
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const center = [snap((start.x + end.x) / 2), 0, snap((start.z + end.z) / 2)];
+  let width = Math.max(Math.abs(dx), asset.width || 2, GRID_SIZE * 3);
+  let depth = Math.max(Math.abs(dz), asset.depth || 2, GRID_SIZE * 3);
+  if (asset.kind === "stone-walkway") {
+    if (Math.abs(dx) >= Math.abs(dz)) depth = 1.2;
+    else width = 1.2;
+  }
+  return [addBuiltEntry(asset, center, { width: snap(width), depth: snap(depth) })];
+}
+
+function addBuiltEntry(asset, position, overrides = {}) {
+  const entry = {
+    uid: crypto.randomUUID(),
+    assetId: asset.id,
+    label: asset.label,
+    kind: asset.kind,
+    color: overrides.color || asset.color,
+    material: overrides.material || asset.material,
+    variant: overrides.variant || defaultVariantForKind(asset.kind),
+    scale: overrides.scale || 1,
+    position,
+    rotationY: overrides.rotationY ?? rememberedRotation(asset.kind),
+    width: overrides.width || asset.width || state.room.width,
+    depth: overrides.depth || asset.depth || state.room.depth,
+    wallColor: asset.color || state.room.wallColor,
+    floorColor: state.room.floorColor,
+    exteriorMaterial: undefined,
+    roomId: null,
+    locked: false,
+  };
+  entry.group = createAssetGroup(entry);
+  scene.add(entry.group);
+  state.objects.push(entry);
+  clampEntryToRoom(entry);
+  syncEntry(entry);
+  rememberRotation(entry);
+  return entry;
+}
+
+function bulldozeAtEvent(event) {
+  const hit = pickObject(event);
+  if (!hit) return;
+  const entry = getEntryByUid(hit.object.userData.uid);
+  if (!entry || isMainRoomEntry(entry)) return;
+  if (entry.locked) {
+    flashHint(`${entry.label} is locked. Unlock it before bulldozing.`);
+    return;
+  }
+  deleteEntry(entry, { record: false, announce: false });
+  state.bulldozeChanged = true;
 }
 
 function pickObject(event) {
@@ -2336,13 +2508,17 @@ function addCopiedEntry(copy, message) {
 function deleteSelected() {
   const entry = getSelectedEntry();
   if (!entry) return;
+  deleteEntry(entry, { record: true, announce: false });
+}
+
+function deleteEntry(entry, { record = true, announce = true } = {}) {
   if (isMainRoomEntry(entry)) {
     flashHint("Initial room cannot be deleted.");
-    return;
+    return false;
   }
   if (entry.locked) {
     flashHint(`${entry.label} is locked. Unlock it to delete.`);
-    return;
+    return false;
   }
   const entriesToDelete = isRoomEntry(entry) ? state.objects.filter((item) => item.uid === entry.uid || item.roomId === entry.uid) : [entry];
   entriesToDelete.forEach((item) => {
@@ -2353,7 +2529,9 @@ function deleteSelected() {
   state.objects = state.objects.filter((item) => !deleteIds.has(item.uid));
   selectObject(null);
   if (entriesToDelete.some(isWallOpeningEntry)) rebuildRoomShells();
-  pushHistory();
+  if (record) pushHistory();
+  if (announce) flashHint(`${entry.label} removed.`);
+  return true;
 }
 
 function rebuildEntry(entry) {
@@ -2709,6 +2887,19 @@ function toggleRoofsVisible() {
   if (!state.roofsVisible) clearHiddenRoofSelection();
   pushHistory();
   flashHint(state.roofsVisible ? "Roofs visible." : "Roofs hidden for interior decorating.");
+}
+
+function setToolMode(mode, announce = true) {
+  state.toolMode = mode;
+  dozerBtn.classList.toggle("active", mode === "bulldoze");
+  if (mode === "bulldoze") {
+    state.activeAssetId = null;
+    selectObject(null);
+    renderAssetPanel();
+    if (announce) flashHint("Bulldozer active. Click or drag across items to remove them.");
+  } else if (announce) {
+    flashHint("Build/select mode active.");
+  }
 }
 
 function updateRoofVisibility() {
@@ -3354,7 +3545,7 @@ function flashHint(message) {
   dropHint.textContent = message;
   clearTimeout(flashHint.timer);
   flashHint.timer = setTimeout(() => {
-    dropHint.textContent = "Choose an item, click once to place it, then orbit or select furniture to edit.";
+    dropHint.textContent = "Choose an item, click once to place it, drag fences/patios to build runs, then orbit or edit.";
   }, 1900);
 }
 
@@ -3619,6 +3810,7 @@ window.render_game_to_text = () => {
       position: entry.position.map((value) => Number(value.toFixed(2))),
     })),
     activeAsset: state.activeAssetId,
+    toolMode: state.toolMode,
     highFidelity: state.highFidelity,
     tour: {
       active: tourState.active,
