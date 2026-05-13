@@ -45,6 +45,8 @@ const EXTERIOR_MATERIAL_TYPES = new Set(["siding", "brick", "stone", "shingles"]
 const MAIN_ROOM_ID = "main-room";
 
 const ASSETS = [
+  { id: "template-kitchen", label: "Kitchen Template", category: "rooms", kind: "room-template", color: "#d7cab4", material: "painted", width: 7, depth: 5.5 },
+  { id: "template-bathroom", label: "Bathroom Template", category: "rooms", kind: "room-template", color: "#d8d1c3", material: "painted", width: 5, depth: 4 },
   { id: "room-module", label: "Room Module", category: "rooms", kind: "room-module", color: "#d6c9b7", material: "painted", thumb: [0, 0] },
   { id: "wide-room", label: "Wide Room", category: "rooms", kind: "room-module", color: "#d8ccb8", material: "painted", width: 6, depth: 4, thumb: [0, 0] },
   { id: "small-room", label: "Small Room", category: "rooms", kind: "room-module", color: "#d5c5b0", material: "painted", width: 4, depth: 4, thumb: [0, 0] },
@@ -206,6 +208,50 @@ const VARIANTS = {
     { id: "straight", label: "Straight" },
     { id: "landing", label: "With Landing" },
   ],
+};
+
+const ROOM_TEMPLATES = {
+  "template-kitchen": {
+    room: {
+      label: "Decorated Kitchen",
+      width: 7,
+      depth: 5.5,
+      wallColor: "#d7cab4",
+      floorColor: "#b99062",
+      exteriorMaterial: "siding",
+    },
+    items: [
+      { assetId: "kitchen-counter", x: -1.75, z: -2.1, rotationY: 0 },
+      { assetId: "sink", x: 0, z: -2.1, rotationY: 0 },
+      { assetId: "stove", x: 1.35, z: -2.1, rotationY: 0 },
+      { assetId: "refrigerator", x: -2.75, z: -1.55, rotationY: 0 },
+      { assetId: "upper-cabinet", x: -0.7, z: -2.65, rotationY: 0 },
+      { assetId: "kitchen-island", x: 0, z: 0.25, rotationY: 0 },
+      { assetId: "window", x: 2.3, z: -2.65, rotationY: 0 },
+      { assetId: "sliding-patio-door", x: 2.1, z: 2.65, rotationY: Math.PI },
+      { assetId: "small-plant", x: 2.65, z: 1.45, rotationY: 0 },
+    ],
+  },
+  "template-bathroom": {
+    room: {
+      label: "Decorated Bathroom",
+      width: 5,
+      depth: 4,
+      wallColor: "#d8d1c3",
+      floorColor: "#c4b49a",
+      exteriorMaterial: "siding",
+    },
+    items: [
+      { assetId: "bathtub", x: -1.25, z: -1.2, rotationY: 0 },
+      { assetId: "shower", x: -1.55, z: 0.95, rotationY: 0 },
+      { assetId: "toilet", x: 1.3, z: -1.1, rotationY: 0 },
+      { assetId: "bath-vanity", x: 1.25, z: 0.75, rotationY: Math.PI },
+      { assetId: "round-rug", x: 0, z: 0.1, rotationY: 0, color: "#9eb0a7", variant: "plain", scale: 0.9 },
+      { assetId: "window", x: 0, z: -1.95, rotationY: 0 },
+      { assetId: "door", x: 2.45, z: 0.65, rotationY: -Math.PI / 2 },
+      { assetId: "small-plant", x: -0.15, z: 1.35, rotationY: 0, scale: 0.85 },
+    ],
+  },
 };
 
 const state = {
@@ -590,7 +636,13 @@ function createAssetSvg(asset) {
   const circle = (cx, cy, r, fill = color) => `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" stroke="${dark}" stroke-width="3"/>`;
 
   let item = "";
-  if (asset.kind === "room-module") {
+  if (asset.kind === "room-template") {
+    if (asset.id === "template-kitchen") {
+      item = `${box(48, 42, 136, 82, "#d7cab4", dark)}<line x1="52" y1="48" x2="180" y2="48" stroke="#f5eee2" stroke-width="6"/><rect x="62" y="82" width="86" height="22" rx="4" fill="${wood}" stroke="${shadeHex(wood, -25)}" stroke-width="3"/><rect x="78" y="70" width="28" height="14" rx="3" fill="#c8d0ce"/><rect x="118" y="68" width="24" height="18" rx="3" fill="${metal}"/><rect x="96" y="108" width="62" height="20" rx="4" fill="#e7dfd3" stroke="${wood}" stroke-width="3"/><rect x="152" y="58" width="22" height="52" rx="4" fill="#dfe3e1" stroke="#9da5a2" stroke-width="3"/>`;
+    } else {
+      item = `${box(54, 42, 124, 82, "#d8d1c3", dark)}<line x1="58" y1="48" x2="174" y2="48" stroke="#f5eee2" stroke-width="6"/><rect x="66" y="84" width="48" height="24" rx="8" fill="#f0eee8" stroke="#b8b0a6" stroke-width="3"/><rect x="126" y="80" width="34" height="32" rx="7" fill="#f2efe8" stroke="#b8b0a6" stroke-width="3"/><rect x="62" y="56" width="34" height="26" rx="4" fill="#a7c9cf" stroke="#71939a" stroke-width="3"/><circle cx="132" cy="122" r="15" fill="#9eb0a7" stroke="#748980" stroke-width="3"/>`;
+    }
+  } else if (asset.kind === "room-module") {
     item = `${box(58, 54, 112, 66, "#d6c9b7", dark)}<line x1="60" y1="58" x2="170" y2="58" stroke="#f5eee2" stroke-width="6"/><line x1="60" y1="58" x2="60" y2="120" stroke="#f5eee2" stroke-width="6"/><line x1="170" y1="58" x2="170" y2="120" stroke="#f5eee2" stroke-width="6"/>`;
   } else if (asset.kind === "door") {
     item = `${box(80, 42, 72, 92, "#f0e5d2", dark)}${box(118, 62, 32, 68, color, dark)}`;
@@ -928,6 +980,10 @@ function updateRoomSize(axis, value, record = true) {
 function placeAsset(assetId, point, recordHistory = true) {
   const asset = ASSETS.find((entry) => entry.id === assetId);
   if (!asset) return;
+  if (asset.kind === "room-template") {
+    placeRoomTemplate(asset, point, recordHistory);
+    return;
+  }
   const isRoomModule = asset.kind === "room-module";
   const containingRoom = asset.kind === "roof" ? findNearestRoomClusterBounds(point) : findContainingRoomBounds(point);
   const isFreePlacement = isFreePlacementEntry(asset) || (!containingRoom && !isWallOpeningAsset(asset));
@@ -971,6 +1027,73 @@ function placeAsset(assetId, point, recordHistory = true) {
   renderAssetPanel();
   if (recordHistory) pushHistory();
   flashHint(`${asset.label} placed and selected.`);
+}
+
+function placeRoomTemplate(asset, point, recordHistory = true) {
+  const template = ROOM_TEMPLATES[asset.id];
+  if (!template || !point) return;
+  const templateRoom = template.room;
+  const roomEntry = {
+    uid: crypto.randomUUID(),
+    assetId: "room-module",
+    label: templateRoom.label,
+    kind: "room-module",
+    color: templateRoom.wallColor,
+    material: "painted",
+    variant: "default",
+    scale: 1,
+    position: [snap(point.x), 0, snap(point.z)],
+    rotationY: 0,
+    width: templateRoom.width,
+    depth: templateRoom.depth,
+    wallColor: templateRoom.wallColor,
+    floorColor: templateRoom.floorColor,
+    exteriorMaterial: state.lastRoomExteriorMaterial || templateRoom.exteriorMaterial || state.room.exteriorMaterial,
+    roomId: null,
+    locked: false,
+  };
+  roomEntry.group = createAssetGroup(roomEntry);
+  scene.add(roomEntry.group);
+  state.objects.push(roomEntry);
+  snapRoomModule(roomEntry);
+
+  const roomCenter = new THREE.Vector3().fromArray(roomEntry.position);
+  const createdEntries = [roomEntry];
+  template.items.forEach((item) => {
+    const itemAsset = ASSETS.find((candidate) => candidate.id === item.assetId);
+    if (!itemAsset) return;
+    const entry = {
+      uid: crypto.randomUUID(),
+      assetId: item.assetId,
+      label: itemAsset.label,
+      kind: itemAsset.kind,
+      color: item.color || itemAsset.color,
+      material: item.material || itemAsset.material,
+      variant: item.variant || defaultVariantForKind(itemAsset.kind),
+      scale: item.scale || 1,
+      position: [snap(roomCenter.x + item.x), 0, snap(roomCenter.z + item.z)],
+      rotationY: item.rotationY ?? rememberedRotation(itemAsset.kind),
+      width: itemAsset.width || templateRoom.width,
+      depth: itemAsset.depth || templateRoom.depth,
+      wallColor: itemAsset.color || templateRoom.wallColor,
+      floorColor: templateRoom.floorColor,
+      exteriorMaterial: undefined,
+      roomId: roomEntry.uid,
+      locked: false,
+    };
+    entry.group = createAssetGroup(entry);
+    scene.add(entry.group);
+    state.objects.push(entry);
+    clampEntryToRoom(entry);
+    createdEntries.push(entry);
+  });
+
+  rebuildRoomShells();
+  selectObject(roomEntry.uid);
+  state.activeAssetId = null;
+  renderAssetPanel();
+  if (recordHistory) pushHistory();
+  flashHint(`${asset.label} placed with ${createdEntries.length - 1} editable items.`);
 }
 
 function createAssetGroup(entry) {
@@ -2711,7 +2834,7 @@ function isPointInsideRoom(point) {
 function canPlaceAsset(assetId, point) {
   const asset = ASSETS.find((entry) => entry.id === assetId);
   if (!asset || !point) return false;
-  if (asset.kind === "room-module" || isFreePlacementEntry(asset)) return Math.abs(point.x) < LOT_LIMIT && Math.abs(point.z) < LOT_LIMIT;
+  if (asset.kind === "room-template" || asset.kind === "room-module" || isFreePlacementEntry(asset)) return Math.abs(point.x) < LOT_LIMIT && Math.abs(point.z) < LOT_LIMIT;
   if (isWallOpeningAsset(asset)) return Boolean(findContainingRoomBounds(point));
   return Math.abs(point.x) < LOT_LIMIT && Math.abs(point.z) < LOT_LIMIT;
 }
