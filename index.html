@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HomeForge Room Studio</title>
+  </head>
+  <body>
+    <div id="app">
+      <aside class="asset-panel" aria-label="Furniture library">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <div>
+            <h1>HomeForge</h1>
+            <p>Room studio</p>
+          </div>
+        </div>
+
+        <div class="panel-tabs" role="tablist" aria-label="Furniture categories">
+          <button class="tab active" data-category="all" type="button">All</button>
+          <button class="tab" data-category="rooms" type="button">Rooms</button>
+          <button class="tab" data-category="seating" type="button">Seating</button>
+          <button class="tab" data-category="work" type="button">Work</button>
+          <button class="tab" data-category="storage" type="button">Storage</button>
+          <button class="tab" data-category="decor" type="button">Decor</button>
+          <button class="tab" data-category="media" type="button">Media</button>
+          <button class="tab" data-category="sleep" type="button">Sleep</button>
+          <button class="tab" data-category="kitchen" type="button">Kitchen</button>
+          <button class="tab" data-category="bath" type="button">Bath</button>
+          <button class="tab" data-category="pets" type="button">Pets</button>
+          <button class="tab" data-category="outdoor" type="button">Outdoor</button>
+          <button class="tab" data-category="structure" type="button">Build</button>
+        </div>
+
+        <label class="search-row">
+          <span>Search</span>
+          <input id="asset-search" type="search" placeholder="bookshelf, chair, rug..." />
+        </label>
+
+        <div id="asset-list" class="asset-list"></div>
+      </aside>
+
+      <main class="stage">
+        <header class="toolbar" aria-label="Room builder tools">
+          <div class="room-controls" aria-label="Room size controls">
+            <label>
+              <span>Width</span>
+              <input id="room-width" type="range" min="4" max="24" step="0.5" value="8" />
+              <output id="room-width-value">8.0 m</output>
+            </label>
+            <label>
+              <span>Depth</span>
+              <input id="room-depth" type="range" min="4" max="24" step="0.5" value="6" />
+              <output id="room-depth-value">6.0 m</output>
+            </label>
+            <label class="color-control">
+              <span>Wall</span>
+              <input id="wall-color" type="color" value="#d6c9b7" />
+            </label>
+            <label class="color-control">
+              <span>Floor</span>
+              <input id="floor-color" type="color" value="#b99062" />
+            </label>
+            <label class="select-control">
+              <span>Exterior</span>
+              <select id="exterior-material">
+                <option value="siding">Vinyl siding</option>
+                <option value="brick">Brick</option>
+                <option value="stone">Stone</option>
+                <option value="shingles">Shingles</option>
+                <option value="painted">Painted</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="tool-group">
+            <button id="iso-view" class="tool active" type="button">Iso</button>
+            <button id="top-view" class="tool" type="button">Top</button>
+            <button id="walk-view" class="tool" type="button">Walk</button>
+            <button id="shell-view" class="tool" type="button">Shell</button>
+            <button id="roofs-toggle" class="tool active" type="button">Roofs</button>
+            <button id="tour-view" class="tool" type="button">Tour</button>
+            <button id="fidelity-toggle" class="tool" type="button">HD</button>
+            <button id="undo-btn" class="tool" type="button">Undo</button>
+            <button id="redo-btn" class="tool" type="button">Redo</button>
+            <button id="save-btn" class="tool" type="button">Save</button>
+            <button id="load-btn" class="tool" type="button">Load</button>
+            <button id="clear-btn" class="tool danger" type="button">Clear</button>
+          </div>
+        </header>
+
+        <div id="canvas-wrap" class="canvas-wrap">
+          <canvas id="game-canvas"></canvas>
+          <div id="drop-hint" class="drop-hint">Choose an item, click once to place it, then orbit or select furniture to edit.</div>
+        </div>
+
+        <section id="inspector" class="inspector" aria-label="Selected furniture editor">
+          <div class="inspector-head">
+            <div>
+              <p class="eyebrow">Selected</p>
+              <h2 id="selected-name">Nothing selected</h2>
+            </div>
+            <button id="delete-btn" class="icon-tool danger" type="button" title="Delete selected">X</button>
+          </div>
+          <div class="editor-grid">
+            <label>
+              <span>Color</span>
+              <input id="color-input" type="color" value="#73876f" />
+            </label>
+            <label>
+              <span>Material</span>
+              <select id="style-select">
+                <option value="fabric">Fabric</option>
+                <option value="wood">Wood</option>
+                <option value="painted">Painted</option>
+                <option value="metal">Metal</option>
+                <option value="siding">Vinyl siding</option>
+                <option value="brick">Brick</option>
+                <option value="stone">Stone</option>
+                <option value="shingles">Shingles</option>
+              </select>
+            </label>
+            <label>
+              <span>Variant</span>
+              <select id="variant-select"></select>
+            </label>
+            <label>
+              <span>Scale</span>
+              <input id="scale-input" type="range" min="0.55" max="1.65" value="1" step="0.05" />
+            </label>
+            <div class="rotate-row">
+              <button id="rotate-left" class="icon-tool" type="button" title="Rotate left">L</button>
+              <button id="rotate-right" class="icon-tool" type="button" title="Rotate right">R</button>
+            </div>
+            <button id="duplicate-btn" class="tool lock-tool" type="button">Duplicate</button>
+            <button id="lock-room-btn" class="tool lock-tool" type="button">Lock item</button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="project-modal" class="project-modal">
+      <form method="dialog" class="project-dialog">
+        <header>
+          <div>
+            <p class="eyebrow">Projects</p>
+            <h2 id="project-modal-title">Save project</h2>
+          </div>
+          <button id="project-close-btn" class="icon-tool danger" value="cancel" type="button">X</button>
+        </header>
+        <label id="project-name-row">
+          <span>Project name</span>
+          <input id="project-name-input" type="text" maxlength="48" placeholder="Modern kitchen plan" />
+        </label>
+        <div id="project-list" class="project-list"></div>
+        <div class="modal-actions">
+          <button id="project-secondary-btn" class="tool" type="button">Cancel</button>
+          <button id="project-primary-btn" class="tool active" type="button">Save</button>
+        </div>
+      </form>
+    </dialog>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
