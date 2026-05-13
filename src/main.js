@@ -44,7 +44,7 @@ const LOT_LIMIT = 60;
 const ROOF_OVERHANG = 1.2;
 const EXTERIOR_MATERIAL_TYPES = new Set(["siding", "brick", "stone", "shingles"]);
 const MAIN_ROOM_ID = "main-room";
-const DRAG_BUILD_KINDS = new Set(["fence", "patio", "stone-walkway", "deck"]);
+const DRAG_BUILD_KINDS = new Set(["fence", "tree", "shrub", "patio", "stone-walkway", "deck"]);
 
 const ASSETS = [
   { id: "template-kitchen", label: "Kitchen Template", category: "rooms", kind: "room-template", color: "#d7cab4", material: "painted", width: 7, depth: 5.5 },
@@ -300,6 +300,10 @@ const state = {
     current: null,
     moved: false,
   },
+  preview: {
+    visible: false,
+    count: 0,
+  },
   bulldozing: false,
   bulldozeChanged: false,
 };
@@ -359,6 +363,24 @@ const walkState = {
 const animationState = { elapsed: 0 };
 const tourState = { active: false, angle: Math.PI / 4 };
 let lotGroup = new THREE.Group();
+const placementPreviewGroup = new THREE.Group();
+placementPreviewGroup.visible = false;
+placementPreviewGroup.userData.selectable = false;
+const placementPreviewGrid = new THREE.Mesh(
+  new THREE.PlaneGeometry(1, 1),
+  new THREE.MeshBasicMaterial({
+    color: "#ffd36e",
+    transparent: true,
+    opacity: 0.24,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  }),
+);
+placementPreviewGrid.rotation.x = -Math.PI / 2;
+placementPreviewGrid.position.y = 0.13;
+placementPreviewGrid.visible = false;
+placementPreviewGrid.renderOrder = 18;
+placementPreviewGrid.userData.selectable = false;
 const selectionHelper = new THREE.BoxHelper(new THREE.Object3D(), 0xffd36e);
 selectionHelper.visible = false;
 selectionHelper.material.transparent = true;
@@ -366,6 +388,8 @@ selectionHelper.material.opacity = 0.95;
 selectionHelper.material.depthTest = false;
 selectionHelper.renderOrder = 20;
 scene.add(selectionHelper);
+scene.add(placementPreviewGrid);
+scene.add(placementPreviewGroup);
 scene.add(lotGroup);
 
 let roomGroup = new THREE.Group();
@@ -403,7 +427,7 @@ function buildLot() {
   scene.remove(lotGroup);
   disposeObject(lotGroup);
   lotGroup = new THREE.Group();
-  const grass = addBox(lotGroup, [42, 0.04, 36], [0, -0.04, 0], makeMat("#6f9458", "painted"), "Starter grass lot");
+  const grass = addBox(lotGroup, [42, 0.04, 36], [0, -0.04, 0], makeMat("#6f9458", "grass"), "Starter grass lot");
   grass.receiveShadow = true;
   grass.userData.selectable = false;
   grass.userData.lot = true;
@@ -416,6 +440,7 @@ function buildRoom() {
   roomGroup = new THREE.Group();
   roomGroup.userData.uid = MAIN_ROOM_ID;
   roomGroup.userData.selectable = true;
+  roomGroup.rotation.y = state.room.rotationY || 0;
   state.room.group = roomGroup;
   scene.add(roomGroup);
 
@@ -616,6 +641,7 @@ function renderAssetPanel() {
         state.activeAssetId = asset.id;
         setToolMode("select", false);
         selectObject(null);
+        clearPlacementPreview();
         renderAssetPanel();
         flashHint(DRAG_BUILD_KINDS.has(asset.kind) ? `${asset.label} ready. Click once or drag to build.` : `${asset.label} ready. Click once inside the room to place it.`);
       });
@@ -770,6 +796,7 @@ function wireUi() {
       state.activeCategory = tab.dataset.category;
       state.activeAssetId = null;
       assetSearch.value = "";
+      clearPlacementPreview();
       document.querySelectorAll(".tab").forEach((entry) => entry.classList.toggle("active", entry === tab));
       renderAssetPanel();
     });
@@ -793,6 +820,9 @@ function wireUi() {
   renderer.domElement.addEventListener("pointermove", onPointerMove);
   renderer.domElement.addEventListener("pointerup", onPointerUp);
   renderer.domElement.addEventListener("pointercancel", onPointerUp);
+  renderer.domElement.addEventListener("pointerleave", () => {
+    if (!state.buildDrag.active) clearPlacementPreview();
+  });
 
   roomWidthInput.addEventListener("input", () => updateRoomSize("width", Number(roomWidthInput.value), false));
   roomDepthInput.addEventListener("input", () => updateRoomSize("depth", Number(roomDepthInput.value), false));
@@ -1039,6 +1069,7 @@ function placeAsset(assetId, point, recordHistory = true) {
   if (isWallOpeningEntry(entry)) rebuildRoomShells();
   selectObject(entry.uid);
   state.activeAssetId = null;
+  clearPlacementPreview();
   renderAssetPanel();
   if (recordHistory) pushHistory();
   flashHint(`${asset.label} placed and selected.`);
@@ -1106,6 +1137,7 @@ function placeRoomTemplate(asset, point, recordHistory = true) {
   rebuildRoomShells();
   selectObject(roomEntry.uid);
   state.activeAssetId = null;
+  clearPlacementPreview();
   renderAssetPanel();
   if (recordHistory) pushHistory();
   flashHint(`${asset.label} placed with ${createdEntries.length - 1} editable items.`);
@@ -1829,7 +1861,7 @@ function addGableEnd(group, x, eaveY, ridgeY, halfD, mat) {
 
 function createOutdoorAsset(group, entry) {
   if (entry.kind === "grass-plot") {
-    addBox(group, [entry.width || 12, 0.05, entry.depth || 10], [0, -0.02, 0], makeMat(entry.color, "painted"), "Grass plot");
+    addBox(group, [entry.width || 12, 0.05, entry.depth || 10], [0, -0.02, 0], makeMat(entry.color, "grass"), "Grass plot");
   } else if (entry.kind === "deck" || entry.kind === "patio" || entry.kind === "stone-walkway") {
     const width = entry.width || 4;
     const depth = entry.depth || 3;
@@ -1844,9 +1876,9 @@ function createOutdoorAsset(group, entry) {
       addBox(group, [0.12, 0.12, depth], [-width / 2 + 0.08, 0.96, 0], makeMat("#765035", "wood"), "Deck rail");
     }
   } else if (entry.kind === "fence") {
-    for (let x = -1.05; x <= 1.05; x += 0.7) addBox(group, [0.12, 1.05, 0.12], [x, 0.52, 0], makeMat(entry.color, entry.material), "Fence post");
-    addBox(group, [2.45, 0.12, 0.1], [0, 0.78, 0], makeMat(entry.color, entry.material), "Fence rail");
-    addBox(group, [2.45, 0.12, 0.1], [0, 0.38, 0], makeMat(entry.color, entry.material), "Fence rail");
+    for (let x = -1.15; x <= 1.15; x += 0.575) addBox(group, [0.12, 1.05, 0.12], [x, 0.52, 0], makeMat(entry.color, entry.material), "Fence post");
+    addBox(group, [2.65, 0.12, 0.1], [0, 0.78, 0], makeMat(entry.color, entry.material), "Fence rail");
+    addBox(group, [2.65, 0.12, 0.1], [0, 0.38, 0], makeMat(entry.color, entry.material), "Fence rail");
   } else if (entry.kind === "tree") {
     addCylinder(group, 0.14, 1.5, [0, 0.75, 0], makeMat("#7a5233", "wood"), "Tree trunk");
     const leaves = makeMat(entry.color, "painted");
@@ -2000,6 +2032,7 @@ function onPointerDown(event) {
   }
   const point = eventToGroundPoint(event);
   if (state.toolMode === "bulldoze") {
+    clearPlacementPreview();
     state.bulldozing = true;
     state.bulldozeChanged = false;
     orbit.enabled = false;
@@ -2019,6 +2052,7 @@ function onPointerDown(event) {
 
   const hit = pickObject(event);
   if (hit) {
+    clearPlacementPreview();
     const entry = getEntryByUid(hit.object.userData.uid);
     if (!entry) return;
     if ((event.ctrlKey || event.metaKey) && !isMainRoomEntry(entry)) {
@@ -2061,6 +2095,7 @@ function onPointerDown(event) {
   }
 
   selectObject(null);
+  updatePlacementPreview(event);
 }
 
 function onPointerMove(event) {
@@ -2081,9 +2116,14 @@ function onPointerMove(event) {
     if (!point) return;
     state.buildDrag.current = point.clone();
     state.buildDrag.moved = state.buildDrag.moved || point.distanceTo(state.buildDrag.start) > GRID_SIZE * 2;
+    updateBuildDragPreview();
     return;
   }
-  if (!dragState.entry) return;
+  if (!dragState.entry) {
+    updatePlacementPreview(event);
+    return;
+  }
+  clearPlacementPreview();
   const point = eventToGroundPoint(event);
   if (!point) return;
   const next = point.sub(dragState.offset);
@@ -2179,6 +2219,7 @@ function snapSelectedDragEntries() {
 }
 
 function startBuildDrag(event, asset, point) {
+  clearPlacementPreview();
   state.buildDrag = {
     active: true,
     assetId: asset.id,
@@ -2188,6 +2229,7 @@ function startBuildDrag(event, asset, point) {
   };
   orbit.enabled = false;
   renderer.domElement.setPointerCapture(event.pointerId);
+  updateBuildDragPreview();
   flashHint(`${asset.label}: drag to build, release to place.`);
 }
 
@@ -2197,6 +2239,7 @@ function finishBuildDrag(event) {
   const { assetId, start, current, moved } = state.buildDrag;
   const end = releasePoint || current;
   resetBuildDrag();
+  clearPlacementPreview();
   orbit.enabled = true;
   const asset = ASSETS.find((entry) => entry.id === assetId);
   if (!asset || !start) return;
@@ -2205,7 +2248,11 @@ function finishBuildDrag(event) {
     placeAsset(assetId, start);
     return;
   }
-  const entries = asset.kind === "fence" ? buildFenceRun(asset, start, end) : buildResizableOutdoorAsset(asset, start, end);
+  const entries = asset.kind === "fence"
+    ? buildFenceRun(asset, start, end)
+    : ["tree", "shrub"].includes(asset.kind)
+      ? buildPlantRun(asset, start, end)
+      : buildResizableOutdoorAsset(asset, start, end);
   if (!entries.length) return;
   state.activeAssetId = null;
   renderAssetPanel();
@@ -2225,20 +2272,31 @@ function resetBuildDrag() {
 }
 
 function buildFenceRun(asset, start, end) {
+  return getLineBuildSpecs(asset, start, end, 2.05).map((spec) => addBuiltEntry(asset, spec.position, { rotationY: spec.rotationY }));
+}
+
+function buildPlantRun(asset, start, end) {
+  const spacing = asset.kind === "tree" ? 2.15 : 1.05;
+  return getLineBuildSpecs(asset, start, end, spacing).map((spec) => addBuiltEntry(asset, spec.position, { rotationY: rememberedRotation(asset.kind) }));
+}
+
+function getLineBuildSpecs(asset, start, end, spacing) {
   const dx = end.x - start.x;
   const dz = end.z - start.z;
   const alongX = Math.abs(dx) >= Math.abs(dz);
   const length = Math.max(Math.abs(alongX ? dx : dz), 0.75);
-  const segmentSpacing = 2.35;
-  const count = Math.max(1, Math.floor(length / segmentSpacing) + 1);
-  const entries = [];
+  const count = Math.max(1, Math.floor(length / spacing) + 1);
+  const specs = [];
   for (let index = 0; index < count; index += 1) {
     const t = count === 1 ? 0 : index / (count - 1);
     const x = alongX ? THREE.MathUtils.lerp(start.x, end.x, t) : start.x;
     const z = alongX ? start.z : THREE.MathUtils.lerp(start.z, end.z, t);
-    entries.push(addBuiltEntry(asset, [snap(x), 0, snap(z)], { rotationY: alongX ? 0 : Math.PI / 2 }));
+    specs.push({
+      position: [snap(x), 0, snap(z)],
+      rotationY: asset.kind === "fence" ? (alongX ? 0 : Math.PI / 2) : rememberedRotation(asset.kind),
+    });
   }
-  return entries;
+  return specs;
 }
 
 function buildResizableOutdoorAsset(asset, start, end) {
@@ -2252,6 +2310,201 @@ function buildResizableOutdoorAsset(asset, start, end) {
     else width = 1.2;
   }
   return [addBuiltEntry(asset, center, { width: snap(width), depth: snap(depth) })];
+}
+
+function updatePlacementPreview(event) {
+  if (state.viewMode === "walk" || state.viewMode === "tour" || state.toolMode !== "select" || !state.activeAssetId || dragState.entry) {
+    clearPlacementPreview();
+    return;
+  }
+  const point = eventToGroundPoint(event);
+  if (!point || !canPlaceAsset(state.activeAssetId, point)) {
+    clearPlacementPreview();
+    return;
+  }
+  const asset = ASSETS.find((entry) => entry.id === state.activeAssetId);
+  if (!asset) {
+    clearPlacementPreview();
+    return;
+  }
+  const entries = createPreviewEntriesForAsset(asset, point);
+  if (!entries.length) {
+    clearPlacementPreview();
+    return;
+  }
+  const bounds = getPreviewBounds(entries);
+  showPlacementPreview(entries, bounds);
+}
+
+function updateBuildDragPreview() {
+  const { assetId, start, current } = state.buildDrag;
+  const asset = ASSETS.find((entry) => entry.id === assetId);
+  if (!asset || !start || !current) {
+    clearPlacementPreview();
+    return;
+  }
+  const entries = createPreviewEntriesForBuild(asset, start, current);
+  if (!entries.length) {
+    clearPlacementPreview();
+    return;
+  }
+  showPlacementPreview(entries, getPreviewBounds(entries));
+}
+
+function createPreviewEntriesForBuild(asset, start, end) {
+  if (asset.kind === "fence") {
+    return getLineBuildSpecs(asset, start, end, 2.05).map((spec) => createPreviewEntry(asset, new THREE.Vector3(...spec.position), { rotationY: spec.rotationY }));
+  }
+  if (["tree", "shrub"].includes(asset.kind)) {
+    const spacing = asset.kind === "tree" ? 2.15 : 1.05;
+    return getLineBuildSpecs(asset, start, end, spacing).map((spec) => createPreviewEntry(asset, new THREE.Vector3(...spec.position), { rotationY: spec.rotationY }));
+  }
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const center = new THREE.Vector3(snap((start.x + end.x) / 2), 0, snap((start.z + end.z) / 2));
+  let width = Math.max(Math.abs(dx), asset.width || 2, GRID_SIZE * 3);
+  let depth = Math.max(Math.abs(dz), asset.depth || 2, GRID_SIZE * 3);
+  if (asset.kind === "stone-walkway") {
+    if (Math.abs(dx) >= Math.abs(dz)) depth = 1.2;
+    else width = 1.2;
+  }
+  return [createPreviewEntry(asset, center, { width: snap(width), depth: snap(depth) })];
+}
+
+function createPreviewEntriesForAsset(asset, point) {
+  if (asset.kind === "room-template") return createRoomTemplatePreviewEntries(asset, point);
+  return [createPreviewEntry(asset, point)];
+}
+
+function createRoomTemplatePreviewEntries(asset, point) {
+  const template = ROOM_TEMPLATES[asset.id];
+  if (!template) return [];
+  const templateRoom = template.room;
+  const roomAsset = ASSETS.find((entry) => entry.id === "room-module");
+  if (!roomAsset) return [];
+  const roomEntry = createPreviewEntry(roomAsset, point, {
+    label: templateRoom.label,
+    color: templateRoom.wallColor,
+    wallColor: templateRoom.wallColor,
+    floorColor: templateRoom.floorColor,
+    width: templateRoom.width,
+    depth: templateRoom.depth,
+    exteriorMaterial: state.lastRoomExteriorMaterial || templateRoom.exteriorMaterial || state.room.exteriorMaterial,
+  });
+  const center = roomEntry.group.position.clone();
+  const entries = [roomEntry];
+  template.items.forEach((item) => {
+    const itemAsset = ASSETS.find((candidate) => candidate.id === item.assetId);
+    if (!itemAsset) return;
+    entries.push(createPreviewEntry(
+      itemAsset,
+      new THREE.Vector3(center.x + item.x, 0, center.z + item.z),
+      {
+        color: item.color || itemAsset.color,
+        variant: item.variant || defaultVariantForKind(itemAsset.kind),
+        scale: item.scale || 1,
+        rotationY: item.rotationY ?? rememberedRotation(itemAsset.kind),
+        roomId: roomEntry.uid,
+        skipClamp: true,
+      },
+    ));
+  });
+  return entries;
+}
+
+function createPreviewEntry(asset, point, overrides = {}) {
+  const containingRoom = asset.kind === "roof" ? findNearestRoomClusterBounds(point) : findContainingRoomBounds(point);
+  const isRoomModule = asset.kind === "room-module";
+  const isFreePlacement = isFreePlacementEntry(asset) || (!containingRoom && !isWallOpeningAsset(asset));
+  const placedPosition = asset.kind === "roof" && containingRoom ? [snap(containingRoom.x), 0, snap(containingRoom.z)] : [snap(point.x), 0, snap(point.z)];
+  const entry = {
+    uid: `preview-${asset.id}-${crypto.randomUUID()}`,
+    assetId: asset.id,
+    label: overrides.label || asset.label,
+    kind: asset.kind,
+    color: overrides.color || asset.color,
+    material: overrides.material || asset.material,
+    variant: overrides.variant || defaultVariantForKind(asset.kind),
+    scale: overrides.scale || 1,
+    position: placedPosition,
+    rotationY: overrides.rotationY ?? rememberedRotation(asset.kind),
+    width: overrides.width || (asset.kind === "roof" && containingRoom ? containingRoom.width + ROOF_OVERHANG : asset.width || state.room.width),
+    depth: overrides.depth || (asset.kind === "roof" && containingRoom ? containingRoom.depth + ROOF_OVERHANG : asset.depth || state.room.depth),
+    wallColor: overrides.wallColor || asset.color || state.room.wallColor,
+    floorColor: overrides.floorColor || state.room.floorColor,
+    exteriorMaterial: overrides.exteriorMaterial || (isRoomModule ? state.lastRoomExteriorMaterial || state.room.exteriorMaterial : undefined),
+    roomId: overrides.roomId ?? (isRoomModule || isFreePlacement ? null : containingRoom?.id || "main"),
+    roomCluster: asset.kind === "roof" ? containingRoom?.roomIds || [] : undefined,
+    locked: false,
+  };
+  entry.group = createAssetGroup(entry);
+  if (!overrides.skipClamp) {
+    if (isRoomModule) snapRoomModule(entry);
+    else clampEntryToRoom(entry);
+  }
+  return entry;
+}
+
+function showPlacementPreview(entries, bounds) {
+  clearPlacementPreview();
+  entries.forEach((entry) => {
+    makePreviewObject(entry.group);
+    placementPreviewGroup.add(entry.group);
+  });
+  placementPreviewGroup.visible = true;
+  placementPreviewGrid.visible = true;
+  placementPreviewGrid.position.set(bounds.x, 0.13, bounds.z);
+  placementPreviewGrid.scale.set(Math.max(bounds.width, GRID_SIZE), Math.max(bounds.depth, GRID_SIZE), 1);
+  state.preview.visible = true;
+  state.preview.count = entries.length;
+}
+
+function clearPlacementPreview() {
+  while (placementPreviewGroup.children.length) {
+    const child = placementPreviewGroup.children[0];
+    placementPreviewGroup.remove(child);
+    disposeObject(child);
+  }
+  placementPreviewGroup.visible = false;
+  placementPreviewGrid.visible = false;
+  state.preview.visible = false;
+  state.preview.count = 0;
+}
+
+function makePreviewObject(group) {
+  group.userData.selectable = false;
+  group.traverse((child) => {
+    child.userData.selectable = false;
+    child.castShadow = false;
+    child.receiveShadow = false;
+    child.renderOrder = 19;
+    if (!child.material) return;
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    const previewMaterials = materials.map((material) => {
+      const previewMat = material.clone();
+      previewMat.transparent = true;
+      previewMat.opacity = child.isLineSegments ? 0.28 : 0.42;
+      previewMat.depthWrite = false;
+      if (previewMat.color) previewMat.color.lerp(new THREE.Color("#fff3c4"), 0.22);
+      return previewMat;
+    });
+    child.material = Array.isArray(child.material) ? previewMaterials : previewMaterials[0];
+  });
+}
+
+function getPreviewBounds(entries) {
+  const box = new THREE.Box3();
+  entries.forEach((entry) => box.expandByObject(entry.group));
+  const center = new THREE.Vector3();
+  const size = new THREE.Vector3();
+  box.getCenter(center);
+  box.getSize(size);
+  return {
+    x: snap(center.x),
+    z: snap(center.z),
+    width: Math.max(snap(size.x + GRID_SIZE), GRID_SIZE),
+    depth: Math.max(snap(size.z + GRID_SIZE), GRID_SIZE),
+  };
 }
 
 function addBuiltEntry(asset, position, overrides = {}) {
@@ -2424,9 +2677,16 @@ function toggleSelectedLock() {
 function rotateSelected(amount) {
   const entry = getSelectedEntry();
   if (!entry) return;
-  if (isMainRoomEntry(entry)) return;
   if (entry.locked) {
     flashHint(`${entry.label} is locked. Unlock it to rotate.`);
+    return;
+  }
+  if (isMainRoomEntry(entry)) {
+    roomGroup.rotation.y += amount;
+    state.room.rotationY = roomGroup.rotation.y;
+    syncEntry(entry);
+    updateSelectionHelper();
+    pushHistory();
     return;
   }
   entry.group.rotation.y += amount;
@@ -2702,7 +2962,7 @@ function serialize() {
     variant: "default",
     scale: 1,
     position: [0, 0, 0],
-    rotationY: 0,
+    rotationY: state.room.rotationY || roomGroup.rotation.y || 0,
     locked: Boolean(state.room.locked),
     width: state.room.width,
     depth: state.room.depth,
@@ -2760,7 +3020,7 @@ function deserialize(payload, recordHistory = true) {
     variant: "default",
     scale: 1,
     position: [0, 0, 0],
-    rotationY: 0,
+    rotationY: payload.room?.rotationY || 0,
     locked: payload.room?.locked ?? true,
     width: payload.room?.width || 12,
     depth: payload.room?.depth || 10,
@@ -2891,6 +3151,7 @@ function toggleRoofsVisible() {
 
 function setToolMode(mode, announce = true) {
   state.toolMode = mode;
+  clearPlacementPreview();
   dozerBtn.classList.toggle("active", mode === "bulldoze");
   if (mode === "bulldoze") {
     state.activeAssetId = null;
@@ -3440,7 +3701,7 @@ function syncEntry(entry) {
   if (isMainRoomEntry(entry)) {
     entry.group = roomGroup;
     entry.position = [0, 0, 0];
-    entry.rotationY = 0;
+    entry.rotationY = roomGroup.rotation.y;
     entry.scale = 1;
     return;
   }
@@ -3466,7 +3727,7 @@ function getEntryByUid(uid) {
 function getMainRoomEntry() {
   state.room.group = roomGroup;
   state.room.position = [0, 0, 0];
-  state.room.rotationY = 0;
+  state.room.rotationY = roomGroup.rotation.y;
   state.room.scale = 1;
   state.room.color = state.room.wallColor;
   return state.room;
@@ -3584,9 +3845,10 @@ function makeMat(color, materialType = "fabric") {
     brick: { roughness: 0.9, metalness: 0.02 },
     stone: { roughness: 0.88, metalness: 0.02 },
     shingles: { roughness: 0.86, metalness: 0.02 },
+    grass: { roughness: 0.92, metalness: 0.01 },
   };
   const preset = presets[materialType] || presets.fabric;
-  const usesTexture = state.highFidelity || EXTERIOR_MATERIAL_TYPES.has(materialType);
+  const usesTexture = state.highFidelity || EXTERIOR_MATERIAL_TYPES.has(materialType) || materialType === "grass";
   if (!usesTexture) return new THREE.MeshStandardMaterial({ color, ...preset });
   return new THREE.MeshStandardMaterial({
     color,
@@ -3594,7 +3856,7 @@ function makeMat(color, materialType = "fabric") {
     metalness: preset.metalness,
     map: getProceduralTexture(color, materialType),
     bumpMap: materialType === "metal" ? null : getProceduralTexture(color, materialType),
-    bumpScale: materialType === "wood" ? 0.045 : EXTERIOR_MATERIAL_TYPES.has(materialType) ? 0.035 : 0.02,
+    bumpScale: materialType === "grass" ? 0.018 : materialType === "wood" ? 0.045 : EXTERIOR_MATERIAL_TYPES.has(materialType) ? 0.035 : 0.02,
   });
 }
 
@@ -3688,6 +3950,23 @@ function getProceduralTexture(color, materialType) {
         ctx.stroke();
       }
     }
+  } else if (materialType === "grass") {
+    ctx.globalAlpha = 0.34;
+    for (let i = 0; i < 180; i += 1) {
+      const x = (i * 37) % 128;
+      const y = (i * 61) % 128;
+      ctx.strokeStyle = shadeColor(base, i % 3 === 0 ? 0.2 : -0.18);
+      ctx.lineWidth = i % 4 === 0 ? 1.8 : 1;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + ((i % 5) - 2) * 1.8, y - 4 - (i % 4));
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 0.16;
+    for (let y = 0; y < 128; y += 16) {
+      ctx.fillStyle = shadeColor(base, y % 32 ? 0.16 : -0.1);
+      ctx.fillRect(0, y, 128, 5);
+    }
   } else if (materialType === "painted") {
     for (let i = 0; i < 80; i += 1) {
       ctx.fillStyle = shadeColor(base, i % 2 ? 0.16 : -0.12);
@@ -3709,6 +3988,7 @@ function getProceduralTexture(color, materialType) {
   else if (materialType === "brick") texture.repeat.set(3, 2.5);
   else if (materialType === "stone") texture.repeat.set(2.2, 2);
   else if (materialType === "shingles") texture.repeat.set(2, 3);
+  else if (materialType === "grass") texture.repeat.set(10, 9);
   else texture.repeat.set(2, 2);
   textureCache.set(key, texture);
   return texture;
@@ -3776,7 +4056,7 @@ function snap(value) {
 
 function disposeObject(object) {
   object.traverse?.((child) => {
-    if (!child.isMesh) return;
+    if (!child.isMesh && !child.isLine && !child.isLineSegments) return;
     child.geometry?.dispose();
     if (Array.isArray(child.material)) child.material.forEach((mat) => mat.dispose?.());
     else child.material?.dispose?.();
@@ -3796,6 +4076,7 @@ window.render_game_to_text = () => {
       wallColor: state.room.wallColor,
       floorColor: state.room.floorColor,
       exteriorMaterial: state.room.exteriorMaterial,
+      rotationY: Number((state.room.rotationY || 0).toFixed(2)),
       locked: Boolean(state.room.locked),
     },
     project: {
@@ -3811,6 +4092,11 @@ window.render_game_to_text = () => {
     })),
     activeAsset: state.activeAssetId,
     toolMode: state.toolMode,
+    preview: {
+      visible: state.preview.visible,
+      count: state.preview.count,
+      gridVisible: placementPreviewGrid.visible,
+    },
     highFidelity: state.highFidelity,
     tour: {
       active: tourState.active,
