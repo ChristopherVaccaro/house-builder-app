@@ -2527,7 +2527,7 @@ function getInteriorWallSpec(asset, start, end, buildGroupId = null) {
   const dz = end.z - start.z;
   const alongX = Math.abs(dx) >= Math.abs(dz);
   const minLength = GRID_SIZE * 2;
-  const margin = 0.28;
+  const margin = 0;
   const side = nearestRoomSide(start, room, alongX);
   const anchor = snapPointToRoomSide(start, room, side, margin);
   const rawEnd = alongX
@@ -2540,6 +2540,7 @@ function getInteriorWallSpec(asset, start, end, buildGroupId = null) {
     ? new THREE.Vector3(THREE.MathUtils.clamp(anchor.x + direction * length, room.x - room.width / 2 + margin, room.x + room.width / 2 - margin), 0, anchor.z)
     : new THREE.Vector3(anchor.x, 0, THREE.MathUtils.clamp(anchor.z + direction * length, room.z - room.depth / 2 + margin, room.z + room.depth / 2 - margin));
   const finalLength = Math.max(alongX ? Math.abs(endPoint.x - anchor.x) : Math.abs(endPoint.z - anchor.z), minLength);
+  const roomStyle = getRoomStyleById(room.id);
   const center = alongX
     ? [snap((anchor.x + endPoint.x) / 2), getLevelY(room.level || state.activeLevel || 1), snap(anchor.z)]
     : [snap(anchor.x), getLevelY(room.level || state.activeLevel || 1), snap((anchor.z + endPoint.z) / 2)];
@@ -2548,6 +2549,8 @@ function getInteriorWallSpec(asset, start, end, buildGroupId = null) {
     rotationY: alongX ? 0 : Math.PI / 2,
     width: snap(finalLength),
     depth: WALL_THICKNESS,
+    color: roomStyle.wallColor,
+    material: "painted",
     roomId: room.id,
     level: room.level || state.activeLevel || 1,
     buildGroupId,
@@ -2570,10 +2573,10 @@ function nearestRoomSide(point, room, alongX) {
 function snapPointToRoomSide(point, room, side, margin = 0.28) {
   const x = THREE.MathUtils.clamp(point.x, room.x - room.width / 2 + margin, room.x + room.width / 2 - margin);
   const z = THREE.MathUtils.clamp(point.z, room.z - room.depth / 2 + margin, room.z + room.depth / 2 - margin);
-  if (side === "left") return new THREE.Vector3(room.x - room.width / 2 + WALL_THICKNESS / 2, 0, snap(z));
-  if (side === "right") return new THREE.Vector3(room.x + room.width / 2 - WALL_THICKNESS / 2, 0, snap(z));
-  if (side === "back") return new THREE.Vector3(snap(x), 0, room.z - room.depth / 2 + WALL_THICKNESS / 2);
-  return new THREE.Vector3(snap(x), 0, room.z + room.depth / 2 - WALL_THICKNESS / 2);
+  if (side === "left") return new THREE.Vector3(room.x - room.width / 2, 0, snap(z));
+  if (side === "right") return new THREE.Vector3(room.x + room.width / 2, 0, snap(z));
+  if (side === "back") return new THREE.Vector3(snap(x), 0, room.z - room.depth / 2);
+  return new THREE.Vector3(snap(x), 0, room.z + room.depth / 2);
 }
 
 function buildResizableOutdoorAsset(asset, start, end, buildGroupId = null) {
@@ -2594,7 +2597,7 @@ function updatePlacementPreview(event) {
     clearPlacementPreview();
     return;
   }
-  const point = eventToGroundPoint(event);
+  const point = eventToPlacementPoint(event, state.activeAssetId);
   if (!point || !canPlaceAsset(state.activeAssetId, point)) {
     clearPlacementPreview();
     return;
@@ -2979,7 +2982,7 @@ function getResizableLengthInfo(entry) {
     return {
       value: entry.width || 2,
       min: 0.75,
-      max: Math.max(1, alongX ? room.width - 0.5 : room.depth - 0.5),
+      max: Math.max(1, alongX ? room.width : room.depth),
       step: 0.25,
     };
   }
@@ -4081,8 +4084,8 @@ function canPlaceAsset(assetId, point) {
   const asset = ASSETS.find((entry) => entry.id === assetId);
   if (!asset || !point) return false;
   if (asset.kind === "room-template" || asset.kind === "room-module" || isFreePlacementEntry(asset)) return Math.abs(point.x) < LOT_LIMIT && Math.abs(point.z) < LOT_LIMIT;
-  if (asset.kind === "interior-wall") return Boolean(findContainingRoomBounds(point));
-  if (isWallOpeningAsset(asset)) return Boolean(findContainingRoomBounds(point));
+  if (asset.kind === "interior-wall") return Boolean(findContainingRoomBounds(point, -WALL_THICKNESS, state.activeLevel));
+  if (isWallOpeningAsset(asset)) return Boolean(findContainingRoomBounds(point, -WALL_THICKNESS, state.activeLevel));
   return Math.abs(point.x) < LOT_LIMIT && Math.abs(point.z) < LOT_LIMIT;
 }
 
@@ -4245,6 +4248,22 @@ function getRoomBoundsById(roomId) {
   const room = state.objects.find((entry) => entry.uid === roomId && isRoomEntry(entry));
   if (!room) return null;
   return { id: room.uid, x: room.group.position.x, y: room.group.position.y, z: room.group.position.z, level: room.level || levelFromY(room.group.position.y), width: room.width || 4, depth: room.depth || 4 };
+}
+
+function getRoomStyleById(roomId) {
+  if (!roomId || roomId === "main") {
+    return {
+      wallColor: state.room.wallColor,
+      floorColor: state.room.floorColor,
+      exteriorMaterial: state.room.exteriorMaterial,
+    };
+  }
+  const room = state.objects.find((entry) => entry.uid === roomId && isRoomEntry(entry));
+  return {
+    wallColor: room?.wallColor || room?.color || state.room.wallColor,
+    floorColor: room?.floorColor || state.room.floorColor,
+    exteriorMaterial: room?.exteriorMaterial || state.room.exteriorMaterial,
+  };
 }
 
 function canWalkToPosition(currentPosition, nextPosition) {
@@ -4539,15 +4558,20 @@ function clampEntryToRoom(entry) {
 
 function snapInteriorWallToRoom(entry) {
   const room = getEntryRoomBounds(entry);
-  const length = Math.max(entry.width || 2, GRID_SIZE * 2);
   const alongX = Math.abs(Math.sin(entry.group.rotation.y)) < 0.5;
-  const margin = 0.28;
+  const maxLength = Math.max(GRID_SIZE * 2, alongX ? room.width : room.depth);
+  const length = Math.min(Math.max(snap(entry.width || 2), GRID_SIZE * 2), maxLength);
+  entry.width = length;
+  const clampSnap = (value, min, max) => {
+    if (min > max) return snap((min + max) / 2);
+    return THREE.MathUtils.clamp(snap(value), min, max);
+  };
   if (alongX) {
-    entry.group.position.x = snap(THREE.MathUtils.clamp(entry.group.position.x, room.x - room.width / 2 + length / 2, room.x + room.width / 2 - length / 2));
-    entry.group.position.z = snap(THREE.MathUtils.clamp(entry.group.position.z, room.z - room.depth / 2 + margin, room.z + room.depth / 2 - margin));
+    entry.group.position.x = clampSnap(entry.group.position.x, room.x - room.width / 2 + length / 2, room.x + room.width / 2 - length / 2);
+    entry.group.position.z = clampSnap(entry.group.position.z, room.z - room.depth / 2, room.z + room.depth / 2);
   } else {
-    entry.group.position.x = snap(THREE.MathUtils.clamp(entry.group.position.x, room.x - room.width / 2 + margin, room.x + room.width / 2 - margin));
-    entry.group.position.z = snap(THREE.MathUtils.clamp(entry.group.position.z, room.z - room.depth / 2 + length / 2, room.z + room.depth / 2 - length / 2));
+    entry.group.position.x = clampSnap(entry.group.position.x, room.x - room.width / 2, room.x + room.width / 2);
+    entry.group.position.z = clampSnap(entry.group.position.z, room.z - room.depth / 2 + length / 2, room.z + room.depth / 2 - length / 2);
   }
   entry.group.position.y = getLevelY(entry.level || 1);
   syncEntry(entry);
