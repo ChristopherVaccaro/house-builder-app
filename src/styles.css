@@ -350,7 +350,8 @@ button {
   gap: 10px;
 }
 
-.editor-grid label:nth-child(4) {
+.editor-grid label:nth-child(4),
+.editor-grid label:nth-child(5) {
   grid-column: 1 / -1;
 }
 

@@ -12,6 +12,9 @@ const styleSelect = document.querySelector("#style-select");
 const variantSelect = document.querySelector("#variant-select");
 const variantField = variantSelect.closest("label");
 const scaleInput = document.querySelector("#scale-input");
+const lengthInput = document.querySelector("#length-input");
+const lengthField = document.querySelector("#length-field");
+const lengthValue = document.querySelector("#length-value");
 const dropHint = document.querySelector("#drop-hint");
 const roomWidthInput = document.querySelector("#room-width");
 const roomDepthInput = document.querySelector("#room-depth");
@@ -47,6 +50,10 @@ const WALL_THICKNESS = 0.16;
 const LEVEL_HEIGHT = 3.35;
 const LOT_LIMIT = 60;
 const ROOF_OVERHANG = 1.2;
+const FENCE_SPACING = 2.05;
+const TREE_SPACING = 2.15;
+const SHRUB_SPACING = 1.05;
+const HEDGE_SPACING = 1.2;
 const EXTERIOR_MATERIAL_TYPES = new Set(["siding", "brick", "stone", "shingles"]);
 const MAIN_ROOM_ID = "main-room";
 const DRAG_BUILD_KINDS = new Set(["interior-wall", "fence", "tree", "shrub", "hedge", "patio", "stone-walkway", "deck"]);
@@ -212,12 +219,14 @@ const VARIANTS = {
   stairs: [
     { id: "straight", label: "Straight" },
     { id: "landing", label: "With Landing" },
-    { id: "second-floor", label: "To Level 2" },
+    { id: "second-floor", label: "Full Story Straight" },
+    { id: "switchback-second-floor", label: "Full Story Switchback" },
   ],
   "wide-stairs": [
     { id: "straight", label: "Straight" },
     { id: "landing", label: "With Landing" },
-    { id: "second-floor", label: "To Level 2" },
+    { id: "second-floor", label: "Full Story Straight" },
+    { id: "switchback-second-floor", label: "Full Story Switchback" },
   ],
   shrub: [
     { id: "cluster", label: "Cluster" },
@@ -319,6 +328,7 @@ const state = {
   preview: {
     visible: false,
     count: 0,
+    point: null,
   },
   bulldozing: false,
   bulldozeChanged: false,
@@ -941,6 +951,13 @@ function wireUi() {
   });
   scaleInput.addEventListener("change", pushHistory);
 
+  lengthInput.addEventListener("input", () => {
+    const entry = getSelectedEntry();
+    if (!entry || entry.locked) return;
+    resizeSelectedLength(Number(lengthInput.value), false);
+  });
+  lengthInput.addEventListener("change", () => resizeSelectedLength(Number(lengthInput.value), true));
+
   document.querySelector("#rotate-left").addEventListener("click", () => rotateSelected(-Math.PI / 8));
   document.querySelector("#rotate-right").addEventListener("click", () => rotateSelected(Math.PI / 8));
   duplicateBtn.addEventListener("click", duplicateSelected);
@@ -973,6 +990,32 @@ function wireUi() {
   window.addEventListener("resize", resize);
   window.addEventListener("keydown", (event) => {
     if (isTypingTarget(event.target)) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redo();
+      else undo();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
+      event.preventDefault();
+      redo();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
+      event.preventDefault();
+      copySelected();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") {
+      event.preventDefault();
+      pasteCopied();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") {
+      event.preventDefault();
+      duplicateSelected();
+      return;
+    }
     if (event.key.toLowerCase() === "f") toggleFullscreen();
     if (state.viewMode === "walk" && ["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"].includes(event.key.toLowerCase())) {
       walkState.keys.add(event.key.toLowerCase());
@@ -984,20 +1027,6 @@ function wireUi() {
     if (event.key.toLowerCase() === "l") toggleSelectedLock();
     if (["r", "e", "]"].includes(event.key.toLowerCase())) rotateSelected(Math.PI / 8);
     if (["q", "["].includes(event.key.toLowerCase())) rotateSelected(-Math.PI / 8);
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
-      event.preventDefault();
-      copySelected();
-    }
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") {
-      event.preventDefault();
-      pasteCopied();
-    }
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") {
-      event.preventDefault();
-      duplicateSelected();
-    }
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") undo();
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") redo();
   });
   window.addEventListener("keyup", (event) => {
     walkState.keys.delete(event.key.toLowerCase());
@@ -1783,9 +1812,25 @@ function createStructureAsset(group, entry) {
     const wide = entry.kind === "wide-stairs";
     const variant = entry.variant || "straight";
     const landing = variant === "landing";
-    const fullStory = variant === "second-floor";
+    const switchback = variant === "switchback-second-floor";
+    const fullStory = variant === "second-floor" || switchback;
     const steps = fullStory ? 14 : landing ? (wide ? 7 : 5) : wide ? 10 : 6;
     const treadWidth = wide ? 2.2 : 1.25;
+    if (switchback) {
+      const halfSteps = 8;
+      const rise = LEVEL_HEIGHT / (halfSteps * 2);
+      const run = 0.34;
+      const laneOffset = treadWidth * 0.72;
+      for (let i = 0; i < halfSteps; i += 1) {
+        addBox(group, [treadWidth, Math.max(0.12, rise * 0.62), 0.42], [-laneOffset, rise / 2 + i * rise, -1.2 + i * run], makeMat(entry.color, entry.material), "Lower switchback stair tread");
+        addBox(group, [treadWidth, Math.max(0.12, rise * 0.62), 0.42], [laneOffset, LEVEL_HEIGHT / 2 + rise / 2 + i * rise, 1.35 - i * run], makeMat(entry.color, entry.material), "Upper switchback stair tread");
+      }
+      addBox(group, [treadWidth * 2 + 0.55, 0.18, 1.15], [0, LEVEL_HEIGHT / 2 + 0.02, 1.48], makeMat(entry.color, entry.material), "Mid stair landing");
+      addBox(group, [treadWidth * 1.25, 0.18, 1.05], [laneOffset, LEVEL_HEIGHT + 0.02, -1.55], makeMat(entry.color, entry.material), "Second level landing");
+      addBox(group, [0.08, 1.05, halfSteps * run + 1.05], [-laneOffset - treadWidth / 2 - 0.2, LEVEL_HEIGHT / 4, 0.0], makeMat("#8d5a35", "wood"), "Lower stair rail");
+      addBox(group, [0.08, 1.05, halfSteps * run + 1.05], [laneOffset + treadWidth / 2 + 0.2, LEVEL_HEIGHT * 0.74, 0.0], makeMat("#8d5a35", "wood"), "Upper stair rail");
+      return;
+    }
     const rise = fullStory ? LEVEL_HEIGHT / steps : 0.16;
     const run = fullStory ? 0.38 : 0.32;
     for (let i = 0; i < steps; i += 1) {
@@ -2352,11 +2397,11 @@ function buildInteriorWall(asset, start, end, buildGroupId = null) {
 }
 
 function buildFenceRun(asset, start, end, buildGroupId = null) {
-  return getLineBuildSpecs(asset, start, end, 2.05).map((spec) => addBuiltEntry(asset, spec.position, { rotationY: spec.rotationY, buildGroupId }));
+  return getLineBuildSpecs(asset, start, end, FENCE_SPACING).map((spec) => addBuiltEntry(asset, spec.position, { rotationY: spec.rotationY, buildGroupId }));
 }
 
 function buildPlantRun(asset, start, end, buildGroupId = null) {
-  const spacing = asset.kind === "tree" ? 2.15 : asset.kind === "hedge" ? 1.2 : 1.05;
+  const spacing = getLineRunSpacing(asset.kind) || SHRUB_SPACING;
   return getLineBuildSpecs(asset, start, end, spacing).map((spec) => addBuiltEntry(asset, spec.position, { rotationY: rememberedRotation(asset.kind), buildGroupId }));
 }
 
@@ -2470,6 +2515,7 @@ function updatePlacementPreview(event) {
   }
   const bounds = getPreviewBounds(entries);
   showPlacementPreview(entries, bounds);
+  state.preview.point = point.clone();
 }
 
 function updateBuildDragPreview() {
@@ -2489,14 +2535,14 @@ function updateBuildDragPreview() {
 
 function createPreviewEntriesForBuild(asset, start, end) {
   if (asset.kind === "fence") {
-    return getLineBuildSpecs(asset, start, end, 2.05).map((spec) => createPreviewEntry(asset, new THREE.Vector3(...spec.position), { rotationY: spec.rotationY }));
+    return getLineBuildSpecs(asset, start, end, FENCE_SPACING).map((spec) => createPreviewEntry(asset, new THREE.Vector3(...spec.position), { rotationY: spec.rotationY }));
   }
   if (asset.kind === "interior-wall") {
     const spec = getInteriorWallSpec(asset, start, end);
     return spec ? [createPreviewEntry(asset, new THREE.Vector3(...spec.position), spec)] : [];
   }
   if (["tree", "shrub", "hedge"].includes(asset.kind)) {
-    const spacing = asset.kind === "tree" ? 2.15 : asset.kind === "hedge" ? 1.2 : 1.05;
+    const spacing = getLineRunSpacing(asset.kind) || SHRUB_SPACING;
     return getLineBuildSpecs(asset, start, end, spacing).map((spec) => createPreviewEntry(asset, new THREE.Vector3(...spec.position), { rotationY: spec.rotationY }));
   }
   const dx = end.x - start.x;
@@ -2611,6 +2657,7 @@ function clearPlacementPreview() {
   placementPreviewGrid.visible = false;
   state.preview.visible = false;
   state.preview.count = 0;
+  state.preview.point = null;
 }
 
 function makePreviewObject(group) {
@@ -2728,9 +2775,7 @@ function selectObject(uid, additive = false) {
   if (uid) {
     const entry = getEntryByUid(uid);
     if (!additive && entry?.buildGroupId) {
-      state.objects
-        .filter((item) => item.buildGroupId === entry.buildGroupId)
-        .forEach((item) => state.selectedIds.add(item.uid));
+      getBuildGroupEntries(entry).forEach((item) => state.selectedIds.add(item.uid));
     } else state.selectedIds.add(uid);
   }
   updateInspector();
@@ -2739,13 +2784,23 @@ function selectObject(uid, additive = false) {
 }
 
 function toggleMultiSelection(uid) {
-  if (state.selectedIds.has(uid)) state.selectedIds.delete(uid);
-  else state.selectedIds.add(uid);
+  const entry = getEntryByUid(uid);
+  const entries = entry?.buildGroupId ? getBuildGroupEntries(entry) : entry ? [entry] : [];
+  const selected = entries.every((item) => state.selectedIds.has(item.uid));
+  entries.forEach((item) => {
+    if (selected) state.selectedIds.delete(item.uid);
+    else state.selectedIds.add(item.uid);
+  });
   state.selectedId = state.selectedIds.has(uid) ? uid : [...state.selectedIds].at(-1) || null;
   updateInspector();
   syncRoomUi();
   updateSelectionHelper();
   flashHint(`${state.selectedIds.size} item${state.selectedIds.size === 1 ? "" : "s"} selected.`);
+}
+
+function getBuildGroupEntries(entry) {
+  if (!entry?.buildGroupId) return entry ? [entry] : [];
+  return state.objects.filter((item) => item.buildGroupId === entry.buildGroupId);
 }
 
 function updateSelectionHelper() {
@@ -2773,6 +2828,8 @@ function updateInspector() {
     variantSelect.innerHTML = `<option>Default</option>`;
     if (variantField) variantField.hidden = true;
     scaleInput.disabled = true;
+    lengthInput.disabled = true;
+    if (lengthField) lengthField.hidden = true;
     duplicateBtn.disabled = true;
     lockRoomBtn.disabled = true;
     deleteBtn.disabled = true;
@@ -2796,9 +2853,157 @@ function updateInspector() {
   colorInput.value = isRoomEntry(entry) ? entry.wallColor || entry.color : entry.color;
   styleSelect.value = isRoomEntry(entry) ? entry.exteriorMaterial || entry.material || "siding" : entry.material;
   scaleInput.value = entry.scale;
+  syncLengthUi(entry);
   syncVariantUi(entry);
   if (entry.locked) variantSelect.disabled = true;
   updateSelectionHelper();
+}
+
+function syncLengthUi(entry) {
+  const info = getResizableLengthInfo(entry);
+  if (!info) {
+    lengthInput.disabled = true;
+    if (lengthField) lengthField.hidden = true;
+    return;
+  }
+  if (lengthField) lengthField.hidden = false;
+  lengthInput.disabled = Boolean(entry.locked);
+  lengthInput.min = info.min;
+  lengthInput.max = info.max;
+  lengthInput.step = info.step || 0.25;
+  lengthInput.value = info.value;
+  lengthValue.textContent = formatLength(info.value);
+}
+
+function getResizableLengthInfo(entry) {
+  if (!entry) return null;
+  if (isInteriorWallEntry(entry)) {
+    const room = getEntryRoomBounds(entry);
+    const alongX = Math.abs(Math.sin(entry.group.rotation.y)) < 0.5;
+    return {
+      value: entry.width || 2,
+      min: 0.75,
+      max: Math.max(1, alongX ? room.width - 0.5 : room.depth - 0.5),
+      step: 0.25,
+    };
+  }
+  if (entry.buildGroupId && getLineRunSpacing(entry.kind)) {
+    return {
+      value: getBuildRunLength(entry),
+      min: getLineRunSpacing(entry.kind),
+      max: 60,
+      step: 0.25,
+    };
+  }
+  if (isResizableSurfaceEntry(entry)) {
+    return {
+      value: Math.max(entry.width || 1, entry.depth || 1),
+      min: 0.75,
+      max: 60,
+      step: 0.25,
+    };
+  }
+  return null;
+}
+
+function resizeSelectedLength(value, record = true) {
+  const entry = getSelectedEntry();
+  if (!entry || entry.locked) return;
+  if (isInteriorWallEntry(entry)) {
+    entry.width = snap(value);
+    rebuildEntry(entry);
+    clampEntryToRoom(entry);
+    rebuildRoomShells();
+  } else if (entry.buildGroupId && getLineRunSpacing(entry.kind)) {
+    resizeBuildRun(entry, value);
+  } else if (isResizableSurfaceEntry(entry)) {
+    resizeSurfaceEntry(entry, value);
+  } else return;
+  syncLengthUi(getSelectedEntry());
+  updateSelectionHelper();
+  if (record) pushHistory();
+}
+
+function isResizableSurfaceEntry(entry) {
+  return ["grass-plot", "deck", "patio", "stone-walkway", "horseshoes", "volleyball-net"].includes(entry?.kind);
+}
+
+function resizeSurfaceEntry(entry, value) {
+  const length = snap(Math.max(value, 0.75));
+  if ((entry.width || 1) >= (entry.depth || 1)) entry.width = length;
+  else entry.depth = length;
+  rebuildEntry(entry);
+  clampEntryToRoom(entry);
+}
+
+function getLineRunSpacing(kind) {
+  if (kind === "fence") return FENCE_SPACING;
+  if (kind === "tree") return TREE_SPACING;
+  if (kind === "hedge") return HEDGE_SPACING;
+  if (kind === "shrub") return SHRUB_SPACING;
+  return null;
+}
+
+function getBuildRunLength(entry) {
+  const entries = getBuildGroupEntries(entry);
+  const spacing = getLineRunSpacing(entry.kind);
+  if (!entries.length || !spacing) return 0;
+  if (entries.length === 1) return spacing;
+  const axis = getBuildRunAxis(entries, entry);
+  const values = entries.map((item) => axis === "x" ? item.group.position.x : item.group.position.z);
+  return Math.max(spacing, Math.max(...values) - Math.min(...values) + spacing);
+}
+
+function getBuildRunAxis(entries, entry) {
+  if (entries.length > 1) {
+    const xs = entries.map((item) => item.group.position.x);
+    const zs = entries.map((item) => item.group.position.z);
+    return Math.max(...xs) - Math.min(...xs) >= Math.max(...zs) - Math.min(...zs) ? "x" : "z";
+  }
+  return Math.abs(Math.sin(entry.group.rotation.y)) < 0.5 ? "x" : "z";
+}
+
+function resizeBuildRun(entry, value) {
+  const entries = getBuildGroupEntries(entry);
+  const spacing = getLineRunSpacing(entry.kind);
+  if (!entries.length || !spacing) return;
+  const template = entries[0];
+  const axis = getBuildRunAxis(entries, template);
+  const sorted = [...entries].sort((a, b) => (axis === "x" ? a.group.position.x - b.group.position.x : a.group.position.z - b.group.position.z));
+  const anchor = sorted[0].group.position.clone();
+  const count = Math.max(1, Math.ceil(Math.max(value, spacing) / spacing));
+  const buildGroupId = template.buildGroupId;
+  const deleteIds = new Set(entries.map((item) => item.uid));
+  entries.forEach((item) => {
+    scene.remove(item.group);
+    disposeObject(item.group);
+  });
+  state.objects = state.objects.filter((item) => !deleteIds.has(item.uid));
+  state.selectedIds.clear();
+
+  const created = [];
+  for (let index = 0; index < count; index += 1) {
+    const copy = {
+      ...stripRuntimeFields(template),
+      uid: crypto.randomUUID(),
+      buildGroupId,
+      position: [
+        snap(anchor.x + (axis === "x" ? index * spacing : 0)),
+        getLevelY(template.level || 1),
+        snap(anchor.z + (axis === "z" ? index * spacing : 0)),
+      ],
+      locked: false,
+    };
+    copy.group = createAssetGroup(copy);
+    scene.add(copy.group);
+    state.objects.push(copy);
+    clampEntryToRoom(copy);
+    syncEntry(copy);
+    state.selectedIds.add(copy.uid);
+    created.push(copy);
+  }
+  state.selectedId = created.at(-1)?.uid || null;
+  updateLevelVisibility();
 }
 
 function syncVariantUi(entry) {
@@ -2842,9 +3047,28 @@ function toggleSelectedLock() {
 
 function rotateSelected(amount) {
   const entry = getSelectedEntry();
-  if (!entry) return;
+  if (!entry) {
+    rotateActivePlacement(amount);
+    return;
+  }
   if (entry.locked) {
     flashHint(`${entry.label} is locked. Unlock it to rotate.`);
+    return;
+  }
+  const selected = getSelectedEntries();
+  if (selected.length > 1) {
+    if (selected.some((item) => item.locked)) {
+      flashHint("One or more selected items are locked. Unlock them to rotate.");
+      return;
+    }
+    selected.forEach((item) => {
+      if (isMainRoomEntry(item)) return;
+      item.group.rotation.y += amount;
+      syncEntry(item);
+      rememberRotation(item);
+    });
+    updateSelectionHelper();
+    pushHistory();
     return;
   }
   if (isMainRoomEntry(entry)) {
@@ -2859,6 +3083,19 @@ function rotateSelected(amount) {
   syncEntry(entry);
   rememberRotation(entry);
   pushHistory();
+}
+
+function rotateActivePlacement(amount) {
+  const asset = ASSETS.find((candidate) => candidate.id === state.activeAssetId);
+  if (!asset) return;
+  state.lastRotationByKind[asset.kind] = rememberedRotation(asset.kind) + amount;
+  if (state.preview.point) {
+    const previewPoint = state.preview.point.clone();
+    const entries = createPreviewEntriesForAsset(asset, previewPoint);
+    if (entries.length) showPlacementPreview(entries, getPreviewBounds(entries));
+    state.preview.point = previewPoint;
+  }
+  flashHint(`${asset.label} preview rotated. Click to place.`);
 }
 
 function duplicateSelected() {
@@ -3801,11 +4038,32 @@ function getWallOpeningsForRoom(roomId) {
   if (!room) return [];
   return state.objects
     .filter(isWallOpeningEntry)
-    .map((entry) => getOpeningForRoom(entry, room))
+    .filter((entry) => openingAppliesToRoom(entry, room))
+    .map((entry) => getOpeningForRoomRaw(entry, room))
     .filter(Boolean);
 }
 
 function getOpeningForRoom(entry, room) {
+  if (!openingAppliesToRoom(entry, room)) return null;
+  return getOpeningForRoomRaw(entry, room);
+}
+
+function openingAppliesToRoom(entry, room) {
+  const ownerId = entry.roomId || "main";
+  if (ownerId === room.id) return true;
+  if (!isPassageOpeningEntry(entry)) return false;
+  const ownerRoom = getRoomBoundsById(ownerId);
+  if (!ownerRoom) return false;
+  const shared = getSharedWallInfo(ownerRoom, room);
+  if (!shared) return false;
+  const ownerOpening = getOpeningForRoomRaw(entry, ownerRoom);
+  const roomOpening = getOpeningForRoomRaw(entry, room);
+  if (!ownerOpening || !roomOpening) return false;
+  const offsetTolerance = roomOpening.width / 2 + 0.35;
+  return ownerOpening.side === shared.sideFrom && roomOpening.side === shared.sideTo && Math.abs(ownerOpening.offset - roomOpening.offset) <= offsetTolerance;
+}
+
+function getOpeningForRoomRaw(entry, room) {
   const position = entry.group?.position || new THREE.Vector3(...(entry.position || [0, 0, 0]));
   const wallCandidates = [
     { side: "back", distance: Math.abs(position.z - (room.z - room.depth / 2)), offset: position.x - room.x, axisLength: room.width },
@@ -3969,11 +4227,12 @@ function snapEntryToWall(entry, createsOpening = false) {
   const x = entry.group.position.x;
   const z = entry.group.position.z;
   const frontWallAvailable = state.shellClosed || ["front-door", "sliding-patio-door", "french-patio-door"].includes(entry.kind) || hasAdjacentRoomOnSide(room, "front");
+  const wallOffset = createsOpening ? 0.08 : entry.kind === "television" ? 0.22 : 0.12;
   const walls = [
-    { side: "right", distance: Math.abs(x - (room.x + room.width / 2)), x: room.x + room.width / 2 - 0.08, z, rotationY: -Math.PI / 2, shared: hasAdjacentRoomOnSide(room, "right") },
-    { side: "left", distance: Math.abs(x - (room.x - room.width / 2)), x: room.x - room.width / 2 + 0.08, z, rotationY: Math.PI / 2, shared: hasAdjacentRoomOnSide(room, "left") },
-    { side: "back", distance: Math.abs(z - (room.z - room.depth / 2)), x, z: room.z - room.depth / 2 + 0.08, rotationY: 0, shared: hasAdjacentRoomOnSide(room, "back") },
-    ...(frontWallAvailable ? [{ side: "front", distance: Math.abs(z - (room.z + room.depth / 2)), x, z: room.z + room.depth / 2 - 0.08, rotationY: Math.PI, shared: hasAdjacentRoomOnSide(room, "front") }] : []),
+    { side: "right", distance: Math.abs(x - (room.x + room.width / 2)), x: room.x + room.width / 2 - wallOffset, z, rotationY: -Math.PI / 2, shared: hasAdjacentRoomOnSide(room, "right") },
+    { side: "left", distance: Math.abs(x - (room.x - room.width / 2)), x: room.x - room.width / 2 + wallOffset, z, rotationY: Math.PI / 2, shared: hasAdjacentRoomOnSide(room, "left") },
+    { side: "back", distance: Math.abs(z - (room.z - room.depth / 2)), x, z: room.z - room.depth / 2 + wallOffset, rotationY: 0, shared: hasAdjacentRoomOnSide(room, "back") },
+    ...(frontWallAvailable ? [{ side: "front", distance: Math.abs(z - (room.z + room.depth / 2)), x, z: room.z + room.depth / 2 - wallOffset, rotationY: Math.PI, shared: hasAdjacentRoomOnSide(room, "front") }] : []),
   ];
   const preferredSharedWall = isPassageOpeningEntry(entry)
     ? walls.filter((wall) => wall.shared && wall.distance < 1.35).sort((a, b) => a.distance - b.distance)[0]
