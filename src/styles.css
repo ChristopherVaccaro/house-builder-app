@@ -165,6 +165,7 @@ button {
 }
 
 .asset-card {
+  position: relative;
   display: grid;
   gap: 8px;
   min-height: 132px;
@@ -208,6 +209,38 @@ button {
   font-size: 0.9rem;
   font-weight: 800;
   line-height: 1.15;
+}
+
+.favorite-toggle {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(69, 78, 69, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 250, 242, 0.9);
+  color: #8a7957;
+  font-size: 1rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 0;
+}
+
+.favorite-toggle.active {
+  color: #234b3d;
+  border-color: #7f9b72;
+  background: #eaf2df;
+}
+
+.empty-assets {
+  grid-column: 1 / -1;
+  border: 1px dashed #cfc8bb;
+  border-radius: 8px;
+  color: #646c62;
+  padding: 14px;
+  background: rgba(255, 250, 242, 0.7);
 }
 
 .stage {
@@ -356,8 +389,13 @@ button {
   gap: 10px;
 }
 
+.editor-grid #name-field {
+  grid-column: 1 / -1;
+}
+
 .editor-grid label:nth-child(4),
-.editor-grid label:nth-child(5) {
+.editor-grid label:nth-child(5),
+.editor-grid #length-field {
   grid-column: 1 / -1;
 }
 

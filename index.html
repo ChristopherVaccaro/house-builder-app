@@ -18,6 +18,8 @@
 
         <div class="panel-tabs" role="tablist" aria-label="Furniture categories">
           <button class="tab active" data-category="all" type="button">All</button>
+          <button class="tab" data-category="favorites" type="button">Favorites</button>
+          <button class="tab" data-category="recent" type="button">Recent</button>
           <button class="tab" data-category="rooms" type="button">Rooms</button>
           <button class="tab" data-category="seating" type="button">Seating</button>
           <button class="tab" data-category="work" type="button">Work</button>
@@ -77,6 +79,10 @@
             <button id="level-1-btn" class="tool active" type="button">Level 1</button>
             <button id="level-2-btn" class="tool" type="button">Level 2</button>
             <button id="levels-all-btn" class="tool active" type="button">All</button>
+            <button id="furniture-layer-btn" class="tool active" type="button">Furn</button>
+            <button id="build-layer-btn" class="tool active" type="button">Build</button>
+            <button id="outdoor-layer-btn" class="tool active" type="button">Outdoor</button>
+            <button id="labels-layer-btn" class="tool active" type="button">Labels</button>
             <button id="iso-view" class="tool active" type="button">Iso</button>
             <button id="top-view" class="tool" type="button">Top</button>
             <button id="walk-view" class="tool" type="button">Walk</button>
@@ -106,6 +112,10 @@
               <button id="delete-btn" class="icon-tool danger" type="button" title="Delete selected">X</button>
             </div>
             <div class="editor-grid">
+              <label id="name-field">
+                <span>Name</span>
+                <input id="name-input" type="text" maxlength="42" value="" />
+              </label>
               <label>
                 <span>Color</span>
                 <input id="color-input" type="color" value="#73876f" />

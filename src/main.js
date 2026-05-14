@@ -8,6 +8,8 @@ const assetList = document.querySelector("#asset-list");
 const assetSearch = document.querySelector("#asset-search");
 const selectedName = document.querySelector("#selected-name");
 const colorInput = document.querySelector("#color-input");
+const nameInput = document.querySelector("#name-input");
+const nameField = document.querySelector("#name-field");
 const styleSelect = document.querySelector("#style-select");
 const variantSelect = document.querySelector("#variant-select");
 const variantField = variantSelect.closest("label");
@@ -33,6 +35,10 @@ const dozerBtn = document.querySelector("#dozer-btn");
 const levelOneBtn = document.querySelector("#level-1-btn");
 const levelTwoBtn = document.querySelector("#level-2-btn");
 const levelsAllBtn = document.querySelector("#levels-all-btn");
+const furnitureLayerBtn = document.querySelector("#furniture-layer-btn");
+const buildLayerBtn = document.querySelector("#build-layer-btn");
+const outdoorLayerBtn = document.querySelector("#outdoor-layer-btn");
+const labelsLayerBtn = document.querySelector("#labels-layer-btn");
 const projectModal = document.querySelector("#project-modal");
 const projectModalTitle = document.querySelector("#project-modal-title");
 const projectNameRow = document.querySelector("#project-name-row");
@@ -44,6 +50,8 @@ const projectCloseBtn = document.querySelector("#project-close-btn");
 
 const STORAGE_KEY = "homeforge-room-studio-save-v1";
 const PROJECTS_KEY = "homeforge-room-studio-projects-v1";
+const FAVORITES_KEY = "homeforge-room-studio-favorites-v1";
+const RECENTS_KEY = "homeforge-room-studio-recents-v1";
 const GRID_SIZE = 0.25;
 const ROOM_HEIGHT = 3;
 const WALL_THICKNESS = 0.16;
@@ -321,6 +329,14 @@ const state = {
   selectedIds: new Set(),
   lastRotationByKind: {},
   lastRoomExteriorMaterial: "siding",
+  favoriteAssetIds: readAssetIdList(FAVORITES_KEY),
+  recentAssetIds: readAssetIdList(RECENTS_KEY),
+  layerVisibility: {
+    furniture: true,
+    structure: true,
+    outdoor: true,
+    labels: true,
+  },
   toolMode: "select",
   buildDrag: {
     active: false,
@@ -398,6 +414,11 @@ let lotGroup = new THREE.Group();
 const placementPreviewGroup = new THREE.Group();
 placementPreviewGroup.visible = false;
 placementPreviewGroup.userData.selectable = false;
+const openingPreviewGroup = new THREE.Group();
+openingPreviewGroup.visible = false;
+openingPreviewGroup.userData.selectable = false;
+const roomLabelGroup = new THREE.Group();
+roomLabelGroup.userData.selectable = false;
 const placementPreviewGrid = new THREE.Mesh(
   new THREE.PlaneGeometry(1, 1),
   new THREE.MeshBasicMaterial({
@@ -422,6 +443,8 @@ selectionHelper.renderOrder = 20;
 scene.add(selectionHelper);
 scene.add(placementPreviewGrid);
 scene.add(placementPreviewGroup);
+scene.add(openingPreviewGroup);
+scene.add(roomLabelGroup);
 scene.add(lotGroup);
 
 let roomGroup = new THREE.Group();
@@ -481,6 +504,8 @@ function buildRoom() {
   const { width, depth, wallColor, floorColor, exteriorMaterial } = state.room;
   addRoomShell(roomGroup, width, depth, wallColor, floorColor, "main", exteriorMaterial);
   tagRoomGroup(roomGroup, MAIN_ROOM_ID);
+  roomGroup.visible = state.layerVisibility.structure && (state.showAllLevels || state.activeLevel === 1);
+  updateRoomLabels();
 }
 
 function addRoomShell(group, width, depth, wallColor, floorColor, roomId = "main", exteriorMaterial = "siding") {
@@ -522,6 +547,23 @@ function addRoomFloor(group, width, depth, floorMat, openings = []) {
   addFloorSegment(maxX, width / 2, -depth / 2, depth / 2);
   addFloorSegment(minX, maxX, -depth / 2, minZ);
   addFloorSegment(minX, maxX, maxZ, depth / 2);
+  relevant.forEach((floorOpening) => addFloorOpeningFrame(group, width, depth, floorOpening));
+}
+
+function addFloorOpeningFrame(group, width, depth, opening) {
+  const minX = THREE.MathUtils.clamp(opening.x - opening.width / 2, -width / 2, width / 2);
+  const maxX = THREE.MathUtils.clamp(opening.x + opening.width / 2, -width / 2, width / 2);
+  const minZ = THREE.MathUtils.clamp(opening.z - opening.depth / 2, -depth / 2, depth / 2);
+  const maxZ = THREE.MathUtils.clamp(opening.z + opening.depth / 2, -depth / 2, depth / 2);
+  const trim = makeMat("#f5efe1", "painted");
+  const rail = makeMat("#8d5a35", "wood");
+  const y = 0.14;
+  addBox(group, [maxX - minX + 0.2, 0.12, 0.12], [(minX + maxX) / 2, y, minZ - 0.06], trim, "Stairwell trim");
+  addBox(group, [maxX - minX + 0.2, 0.12, 0.12], [(minX + maxX) / 2, y, maxZ + 0.06], trim, "Stairwell trim");
+  addBox(group, [0.12, 0.12, maxZ - minZ + 0.2], [minX - 0.06, y, (minZ + maxZ) / 2], trim, "Stairwell trim");
+  addBox(group, [0.12, 0.12, maxZ - minZ + 0.2], [maxX + 0.06, y, (minZ + maxZ) / 2], trim, "Stairwell trim");
+  addBox(group, [0.08, 0.62, maxZ - minZ], [minX - 0.2, 0.48, (minZ + maxZ) / 2], rail, "Stairwell guard rail");
+  addBox(group, [0.08, 0.62, maxZ - minZ], [maxX + 0.2, 0.48, (minZ + maxZ) / 2], rail, "Stairwell guard rail");
 }
 
 function tagRoomGroup(group, uid) {
@@ -672,40 +714,102 @@ function addWallTrimSegment(group, side, width, depth, start, end, material) {
 function renderAssetPanel() {
   const query = assetSearch.value.trim().toLowerCase();
   assetList.innerHTML = "";
-  ASSETS.filter((asset) => query || state.activeCategory === "all" || asset.category === state.activeCategory)
-    .filter((asset) => !query || `${asset.label} ${asset.kind}`.toLowerCase().includes(query))
-    .forEach((asset) => {
-      const button = document.createElement("button");
-      button.className = `asset-card ${asset.id === state.activeAssetId ? "selected" : ""}`;
-      button.type = "button";
-      button.draggable = true;
-      button.dataset.assetId = asset.id;
+  const assets = getVisibleAssets(query);
+  if (!assets.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-assets";
+    empty.textContent = state.activeCategory === "favorites"
+      ? "Favorite assets with the star button to keep them here."
+      : state.activeCategory === "recent"
+        ? "Recently selected assets will appear here."
+        : "No assets match this search.";
+    assetList.append(empty);
+    return;
+  }
+  assets.forEach((asset) => {
+    const button = document.createElement("button");
+    button.className = `asset-card ${asset.id === state.activeAssetId ? "selected" : ""}`;
+    button.type = "button";
+    button.draggable = true;
+    button.dataset.assetId = asset.id;
 
-      const thumb = document.createElement("div");
-      thumb.className = "thumb";
-      const thumbImage = document.createElement("img");
-      thumbImage.src = getAssetThumbnail(asset);
-      thumbImage.alt = "";
-      thumb.append(thumbImage);
-
-      const label = document.createElement("span");
-      label.textContent = asset.label;
-      button.append(thumb, label);
-
-      button.addEventListener("click", () => {
-        state.activeAssetId = asset.id;
-        setToolMode("select", false);
-        selectObject(null);
-        clearPlacementPreview();
-        renderAssetPanel();
-        flashHint(DRAG_BUILD_KINDS.has(asset.kind) ? `${asset.label} ready. Click once or drag to build.` : `${asset.label} ready. Click once to place it.`);
-      });
-      button.addEventListener("dragstart", (event) => {
-        event.dataTransfer.setData("text/plain", asset.id);
-        event.dataTransfer.effectAllowed = "copy";
-      });
-      assetList.append(button);
+    const favorite = document.createElement("button");
+    favorite.className = `favorite-toggle ${state.favoriteAssetIds.includes(asset.id) ? "active" : ""}`;
+    favorite.type = "button";
+    favorite.title = state.favoriteAssetIds.includes(asset.id) ? "Remove favorite" : "Add favorite";
+    favorite.textContent = state.favoriteAssetIds.includes(asset.id) ? "F" : "+";
+    favorite.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleFavoriteAsset(asset.id);
     });
+
+    const thumb = document.createElement("div");
+    thumb.className = "thumb";
+    const thumbImage = document.createElement("img");
+    thumbImage.src = getAssetThumbnail(asset);
+    thumbImage.alt = "";
+    thumb.append(thumbImage);
+
+    const label = document.createElement("span");
+    label.textContent = asset.label;
+    button.append(favorite, thumb, label);
+
+    button.addEventListener("click", () => {
+      state.activeAssetId = asset.id;
+      rememberRecentAsset(asset.id);
+      setToolMode("select", false);
+      selectObject(null);
+      clearPlacementPreview();
+      renderAssetPanel();
+      flashHint(DRAG_BUILD_KINDS.has(asset.kind) ? `${asset.label} ready. Click once or drag to build.` : `${asset.label} ready. Click once to place it.`);
+    });
+    button.addEventListener("dragstart", (event) => {
+      rememberRecentAsset(asset.id);
+      event.dataTransfer.setData("text/plain", asset.id);
+      event.dataTransfer.effectAllowed = "copy";
+    });
+    assetList.append(button);
+  });
+}
+
+function getVisibleAssets(query) {
+  if (query) return ASSETS.filter((asset) => `${asset.label} ${asset.kind}`.toLowerCase().includes(query));
+  if (state.activeCategory === "favorites") {
+    return state.favoriteAssetIds.map((id) => ASSETS.find((asset) => asset.id === id)).filter(Boolean);
+  }
+  if (state.activeCategory === "recent") {
+    return state.recentAssetIds.map((id) => ASSETS.find((asset) => asset.id === id)).filter(Boolean);
+  }
+  return ASSETS.filter((asset) => state.activeCategory === "all" || asset.category === state.activeCategory);
+}
+
+function readAssetIdList(key) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(parsed) ? parsed.filter((id) => ASSETS.some((asset) => asset.id === id)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeAssetIdList(key, ids) {
+  localStorage.setItem(key, JSON.stringify(ids));
+}
+
+function toggleFavoriteAsset(assetId) {
+  const next = state.favoriteAssetIds.includes(assetId)
+    ? state.favoriteAssetIds.filter((id) => id !== assetId)
+    : [assetId, ...state.favoriteAssetIds];
+  state.favoriteAssetIds = next;
+  writeAssetIdList(FAVORITES_KEY, next);
+  renderAssetPanel();
+}
+
+function rememberRecentAsset(assetId) {
+  state.recentAssetIds = [assetId, ...state.recentAssetIds.filter((id) => id !== assetId)].slice(0, 18);
+  writeAssetIdList(RECENTS_KEY, state.recentAssetIds);
+  if (state.activeCategory === "recent") renderAssetPanel();
 }
 
 function getAssetThumbnail(asset) {
@@ -862,6 +966,19 @@ function wireUi() {
 
   assetSearch.addEventListener("input", renderAssetPanel);
 
+  nameInput.addEventListener("input", () => {
+    const entry = getSelectedEntry();
+    if (!entry) return;
+    const nextName = nameInput.value.trim() || (isRoomEntry(entry) ? "Room" : entry.label);
+    entry.label = nextName;
+    if (isMainRoomEntry(entry)) state.room.label = nextName;
+    selectedName.textContent = state.selectedIds.size > 1
+      ? `${state.selectedIds.size} items selected`
+      : entry.locked ? `${entry.label} (locked)` : entry.label;
+    updateRoomLabels();
+  });
+  nameInput.addEventListener("change", pushHistory);
+
   canvasWrap.addEventListener("dragover", (event) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
@@ -1005,6 +1122,10 @@ function wireUi() {
   levelOneBtn.addEventListener("click", () => setActiveLevel(1));
   levelTwoBtn.addEventListener("click", () => setActiveLevel(2));
   levelsAllBtn.addEventListener("click", () => toggleAllLevels());
+  furnitureLayerBtn.addEventListener("click", () => toggleLayer("furniture"));
+  buildLayerBtn.addEventListener("click", () => toggleLayer("structure"));
+  outdoorLayerBtn.addEventListener("click", () => toggleLayer("outdoor"));
+  labelsLayerBtn.addEventListener("click", () => toggleLayer("labels"));
   projectPrimaryBtn.addEventListener("click", handleProjectPrimary);
   projectSecondaryBtn.addEventListener("click", closeProjectModal);
   projectCloseBtn.addEventListener("click", closeProjectModal);
@@ -1110,6 +1231,7 @@ function updateRoomSize(axis, value, record = true) {
 function placeAsset(assetId, point, recordHistory = true) {
   const asset = ASSETS.find((entry) => entry.id === assetId);
   if (!asset) return;
+  rememberRecentAsset(assetId);
   if (asset.kind === "room-template") {
     placeRoomTemplate(asset, point, recordHistory);
     return;
@@ -1865,6 +1987,7 @@ function createStructureAsset(group, entry) {
       }
       addBox(group, [treadWidth * 2 + 0.55, 0.18, 1.15], [0, LEVEL_HEIGHT / 2 + 0.02, 1.48], makeMat(entry.color, entry.material), "Mid stair landing");
       addBox(group, [treadWidth * 1.25, 0.18, 1.05], [laneOffset, LEVEL_HEIGHT + 0.02, -1.55], makeMat(entry.color, entry.material), "Second level landing");
+      addStairwellGuide(group, [treadWidth * 1.25 + 1.05, 0.04, 1.55], [laneOffset, LEVEL_HEIGHT + 0.09, -1.55]);
       addBox(group, [0.08, 1.05, halfSteps * run + 1.05], [-laneOffset - treadWidth / 2 - 0.2, LEVEL_HEIGHT / 4, 0.0], makeMat("#8d5a35", "wood"), "Lower stair rail");
       addBox(group, [0.08, 1.05, halfSteps * run + 1.05], [laneOffset + treadWidth / 2 + 0.2, LEVEL_HEIGHT * 0.74, 0.0], makeMat("#8d5a35", "wood"), "Upper stair rail");
       return;
@@ -1876,6 +1999,7 @@ function createStructureAsset(group, entry) {
     }
     if (fullStory) {
       addBox(group, [treadWidth + 0.35, 0.18, 1.05], [0, LEVEL_HEIGHT + 0.02, -1.15 + steps * run + 0.22], makeMat(entry.color, entry.material), "Second level stair landing");
+      addStairwellGuide(group, [treadWidth + 1.05, 0.04, 1.85], [0, LEVEL_HEIGHT + 0.09, -1.15 + steps * run + 0.22]);
       addBox(group, [0.08, 1.05, steps * run + 0.9], [-treadWidth / 2 - 0.22, LEVEL_HEIGHT / 2, -1.05 + (steps * run) / 2], makeMat("#8d5a35", "wood"), "Stair rail");
       addBox(group, [0.08, 1.05, steps * run + 0.9], [treadWidth / 2 + 0.22, LEVEL_HEIGHT / 2, -1.05 + (steps * run) / 2], makeMat("#8d5a35", "wood"), "Stair rail");
     }
@@ -1923,6 +2047,19 @@ function createStructureAsset(group, entry) {
       createGableRoof(group, entry, width, depth);
     }
   }
+}
+
+function addStairwellGuide(group, size, position) {
+  const mat = new THREE.MeshBasicMaterial({
+    color: "#8fd6a3",
+    transparent: true,
+    opacity: 0.36,
+    depthWrite: false,
+  });
+  const guide = addBox(group, size, position, mat, "Level 2 stairwell guide");
+  guide.castShadow = false;
+  guide.receiveShadow = false;
+  return guide;
 }
 
 function createInteriorWall(group, entry) {
@@ -2328,6 +2465,7 @@ function onPointerMove(event) {
   moveWallContentsWithDrag();
   moveSelectedWithDrag();
   syncEntry(dragState.entry);
+  if (isRoomEntry(dragState.entry)) updateRoomLabels();
   dragState.moved = true;
 }
 
@@ -2738,6 +2876,8 @@ function showPlacementPreview(entries, bounds) {
     makePreviewObject(entry.group);
     placementPreviewGroup.add(entry.group);
   });
+  const openingEntry = entries.find(isWallOpeningEntry);
+  if (openingEntry) showOpeningPreviewHighlight(openingEntry);
   placementPreviewGroup.visible = true;
   placementPreviewGrid.visible = true;
   placementPreviewGrid.position.set(bounds.x, bounds.y + 0.13, bounds.z);
@@ -2753,10 +2893,81 @@ function clearPlacementPreview() {
     disposeObject(child);
   }
   placementPreviewGroup.visible = false;
+  while (openingPreviewGroup.children.length) {
+    const child = openingPreviewGroup.children[0];
+    openingPreviewGroup.remove(child);
+    disposeObject(child);
+  }
+  openingPreviewGroup.visible = false;
   placementPreviewGrid.visible = false;
   state.preview.visible = false;
   state.preview.count = 0;
   state.preview.point = null;
+}
+
+function showOpeningPreviewHighlight(entry) {
+  const openingWidth = getOpeningWidth(entry);
+  const bottom = entry.kind === "window" ? 0.9 : 0.02;
+  const top = entry.kind === "window" ? 1.92 : ["sliding-patio-door", "french-patio-door"].includes(entry.kind) ? 2.34 : 2.24;
+  const height = top - bottom;
+  const mat = new THREE.MeshBasicMaterial({
+    color: "#8fd6a3",
+    transparent: true,
+    opacity: 0.48,
+    depthWrite: false,
+    depthTest: false,
+  });
+  const group = new THREE.Group();
+  group.userData.selectable = false;
+  if (entry.targetWallId) {
+    const wall = getEntryByUid(entry.targetWallId);
+    if (wall?.group) {
+      const alongX = Math.abs(Math.sin(wall.group.rotation.y)) < 0.5;
+      const offset = entry.wallOffset ?? getInteriorWallOffsetForEntry(entry, wall);
+      const position = wall.group.position.clone();
+      if (alongX) position.x += offset;
+      else position.z += offset;
+      position.y = getLevelY(entry.level || wall.level || 1) + bottom + height / 2;
+      const highlight = addBox(group, alongX ? [openingWidth, height, 0.06] : [0.06, height, openingWidth], [0, 0, 0], mat, "Opening preview cut");
+      highlight.userData.selectable = false;
+      group.position.copy(position);
+      group.rotation.y = wall.group.rotation.y;
+    }
+  } else {
+    const room = getEntryRoomBounds(entry);
+    const opening = getOpeningForRoomRaw(entry, room);
+    if (opening) {
+      const y = getLevelY(room.level || entry.level || 1) + bottom + height / 2;
+      const side = opening.side;
+      const offset = opening.offset;
+      const position = new THREE.Vector3(room.x, y, room.z);
+      let size = [openingWidth, height, 0.06];
+      if (side === "front") {
+        position.set(room.x + offset, y, room.z + room.depth / 2 - 0.035);
+      } else if (side === "back") {
+        position.set(room.x + offset, y, room.z - room.depth / 2 + 0.035);
+      } else if (side === "left") {
+        position.set(room.x - room.width / 2 + 0.035, y, room.z + offset);
+        size = [0.06, height, openingWidth];
+      } else {
+        position.set(room.x + room.width / 2 - 0.035, y, room.z + offset);
+        size = [0.06, height, openingWidth];
+      }
+      const highlight = addBox(group, size, [0, 0, 0], mat, "Opening preview cut");
+      highlight.userData.selectable = false;
+      group.position.copy(position);
+    }
+  }
+  if (!group.children.length) {
+    mat.dispose();
+    return;
+  }
+  group.traverse((child) => {
+    child.userData.selectable = false;
+    child.renderOrder = 29;
+  });
+  openingPreviewGroup.add(group);
+  openingPreviewGroup.visible = true;
 }
 
 function makePreviewObject(group) {
@@ -2921,6 +3132,8 @@ function updateInspector() {
   const entry = getSelectedEntry();
   if (!entry) {
     selectedName.textContent = "Nothing selected";
+    nameInput.disabled = true;
+    nameInput.value = "";
     colorInput.disabled = true;
     styleSelect.disabled = true;
     variantSelect.disabled = true;
@@ -2940,6 +3153,8 @@ function updateInspector() {
     ? `${state.selectedIds.size} items selected`
     : entry.locked ? `${entry.label} (locked)` : entry.label;
   colorInput.disabled = false;
+  nameInput.disabled = state.selectedIds.size > 1;
+  nameInput.value = state.selectedIds.size > 1 ? "" : entry.label || "";
   styleSelect.disabled = false;
   variantSelect.disabled = false;
   if (variantField) variantField.hidden = false;
@@ -3320,6 +3535,7 @@ function addCopiedEntry(copy, message) {
   }
   syncEntry(copy);
   selectObject(copy.uid);
+  updateLevelVisibility();
   if (isWallOpeningEntry(copy)) rebuildForOpenings([copy]);
   pushHistory();
   flashHint(message);
@@ -3354,6 +3570,7 @@ function deleteSelected() {
   const deleteIds = new Set(entriesToDelete.map((item) => item.uid));
   state.objects = state.objects.filter((item) => !deleteIds.has(item.uid));
   selectObject(null);
+  updateRoomLabels();
   if (entriesToDelete.some(isWallOpeningEntry) || entriesToDelete.some(isInteriorWallEntry)) rebuildRoomShells();
   pushHistory();
   flashHint(`${entriesToDelete.length} items removed.`);
@@ -3380,6 +3597,7 @@ function deleteEntry(entry, { record = true, announce = true } = {}) {
   const deleteIds = new Set(entriesToDelete.map((item) => item.uid));
   state.objects = state.objects.filter((item) => !deleteIds.has(item.uid));
   selectObject(null);
+  updateRoomLabels();
   if (entriesToDelete.some(isWallOpeningEntry) || entriesToDelete.some(isInteriorWallEntry)) rebuildRoomShells();
   if (record) pushHistory();
   if (announce) flashHint(`${entry.label} removed.`);
@@ -3404,6 +3622,7 @@ function rebuildEntry(entry) {
   entry.group.scale.setScalar(scale);
   scene.add(entry.group);
   syncEntry(entry);
+  updateLevelVisibility();
 }
 
 function rebuildRoomEntry(entry) {
@@ -3579,7 +3798,7 @@ function serialize() {
   const room = {
     uid: MAIN_ROOM_ID,
     assetId: "main-room",
-    label: "Initial Room",
+    label: state.room.label || "Initial Room",
     kind: "room-module",
     color: state.room.wallColor,
     material: state.room.material || "painted",
@@ -3605,9 +3824,11 @@ function serialize() {
     activeLevel: state.activeLevel,
     showAllLevels: state.showAllLevels,
     highFidelity: state.highFidelity,
+    layerVisibility: state.layerVisibility,
     objects: state.objects.map((entry) => ({
       uid: entry.uid,
       assetId: entry.assetId,
+      label: entry.label,
       color: entry.color,
       material: entry.material,
       variant: entry.variant,
@@ -3643,7 +3864,7 @@ function deserialize(payload, recordHistory = true) {
   state.room = {
     uid: MAIN_ROOM_ID,
     assetId: "main-room",
-    label: "Initial Room",
+    label: payload.room?.label || "Initial Room",
     kind: "room-module",
     color: payload.room?.wallColor || "#d6c9b7",
     material: "painted",
@@ -3666,6 +3887,12 @@ function deserialize(payload, recordHistory = true) {
   state.roofsVisible = payload.roofsVisible ?? true;
   state.activeLevel = payload.activeLevel || 1;
   state.showAllLevels = payload.showAllLevels ?? true;
+  state.layerVisibility = {
+    furniture: payload.layerVisibility?.furniture ?? true,
+    structure: payload.layerVisibility?.structure ?? true,
+    outdoor: payload.layerVisibility?.outdoor ?? true,
+    labels: payload.layerVisibility?.labels ?? true,
+  };
   fidelityToggle.classList.toggle("active", state.highFidelity);
   document.querySelector("#shell-view").classList.toggle("active", state.shellClosed);
   roofsToggleBtn.classList.toggle("active", state.roofsVisible);
@@ -3678,7 +3905,7 @@ function deserialize(payload, recordHistory = true) {
     const entry = {
       uid: item.uid || crypto.randomUUID(),
       assetId: item.assetId,
-      label: asset.label,
+      label: item.label || asset.label,
       kind: asset.kind,
       color: item.color || asset.color,
       material: item.material || asset.material,
@@ -3783,15 +4010,120 @@ function updateLevelUi() {
   levelOneBtn.classList.toggle("active", state.activeLevel === 1);
   levelTwoBtn.classList.toggle("active", state.activeLevel === 2);
   levelsAllBtn.classList.toggle("active", state.showAllLevels);
+  furnitureLayerBtn.classList.toggle("active", state.layerVisibility.furniture);
+  buildLayerBtn.classList.toggle("active", state.layerVisibility.structure);
+  outdoorLayerBtn.classList.toggle("active", state.layerVisibility.outdoor);
+  labelsLayerBtn.classList.toggle("active", state.layerVisibility.labels);
 }
 
 function updateLevelVisibility() {
   const visibleForLevel = (level) => state.showAllLevels || level === state.activeLevel;
-  roomGroup.visible = visibleForLevel(1);
+  roomGroup.visible = visibleForLevel(1) && state.layerVisibility.structure;
+  lotGroup.visible = state.layerVisibility.outdoor;
   state.objects.forEach((entry) => {
-    if (entry.group) entry.group.visible = visibleForLevel(entry.level || 1) && (entry.kind !== "roof" || state.roofsVisible);
+    if (entry.group) {
+      entry.group.visible = visibleForLevel(entry.level || 1) && isLayerVisible(entry) && (entry.kind !== "roof" || state.roofsVisible);
+    }
   });
+  updateRoomLabels();
   updateSelectionHelper();
+}
+
+function toggleLayer(layer) {
+  state.layerVisibility[layer] = !state.layerVisibility[layer];
+  updateLevelUi();
+  updateLevelVisibility();
+  if (!isSelectedLayerVisible()) selectObject(null);
+  pushHistory();
+  flashHint(`${layer === "structure" ? "Build" : layer} layer ${state.layerVisibility[layer] ? "visible" : "hidden"}.`);
+}
+
+function isSelectedLayerVisible() {
+  return getSelectedEntries().every((entry) => isLayerVisible(entry));
+}
+
+function isLayerVisible(entry) {
+  return Boolean(state.layerVisibility[getEntryLayer(entry)]);
+}
+
+function getEntryLayer(entry) {
+  const asset = ASSETS.find((candidate) => candidate.id === entry?.assetId);
+  if (isRoomEntry(entry) || isStructureEntry(entry) || isInteriorWallEntry(entry) || entry?.kind === "roof" || ["stairs", "wide-stairs", "stair-landing"].includes(entry?.kind)) return "structure";
+  if (asset?.category === "outdoor" || isFreePlacementEntry(entry)) return "outdoor";
+  return "furniture";
+}
+
+function updateRoomLabels() {
+  while (roomLabelGroup.children.length) {
+    const child = roomLabelGroup.children[0];
+    roomLabelGroup.remove(child);
+    disposeObject(child);
+  }
+  roomLabelGroup.visible = state.layerVisibility.labels;
+  if (!state.layerVisibility.labels) return;
+  const visibleForLevel = (level) => state.showAllLevels || level === state.activeLevel;
+  const rooms = [
+    { id: "main", label: state.room.label || "Initial Room", x: 0, z: 0, y: 0, level: 1 },
+    ...state.objects.filter(isRoomEntry).map((entry) => ({
+      id: entry.uid,
+      label: entry.label || "Room",
+      x: entry.group.position.x,
+      z: entry.group.position.z,
+      y: entry.group.position.y,
+      level: entry.level || levelFromY(entry.group.position.y),
+    })),
+  ];
+  rooms
+    .filter((room) => visibleForLevel(room.level))
+    .forEach((room) => {
+      const sprite = makeRoomLabelSprite(room.label, room.level);
+      sprite.position.set(room.x, getLevelY(room.level) + 0.18, room.z);
+      sprite.userData.selectable = false;
+      roomLabelGroup.add(sprite);
+    });
+}
+
+function makeRoomLabelSprite(label, level) {
+  const canvasLabel = document.createElement("canvas");
+  canvasLabel.width = 512;
+  canvasLabel.height = 128;
+  const ctx = canvasLabel.getContext("2d");
+  ctx.clearRect(0, 0, canvasLabel.width, canvasLabel.height);
+  ctx.fillStyle = "rgba(255, 250, 242, 0.92)";
+  roundRect(ctx, 16, 20, 480, 88, 20);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(44, 56, 47, 0.22)";
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  ctx.fillStyle = "#223027";
+  ctx.font = "700 34px Inter, Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label.slice(0, 28), 256, 55);
+  ctx.fillStyle = "#637064";
+  ctx.font = "700 20px Inter, Arial, sans-serif";
+  ctx.fillText(`Level ${level}`, 256, 86);
+  const texture = new THREE.CanvasTexture(canvasLabel);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(2.7, 0.68, 1);
+  sprite.renderOrder = 30;
+  return sprite;
+}
+
+function roundRect(ctx, x, y, width, height, radius) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
 }
 
 function toggleTourMode() {
@@ -5049,10 +5381,17 @@ function formatLength(meters) {
 
 function disposeObject(object) {
   object.traverse?.((child) => {
-    if (!child.isMesh && !child.isLine && !child.isLineSegments) return;
+    if (!child.isMesh && !child.isLine && !child.isLineSegments && !child.isSprite) return;
     child.geometry?.dispose();
-    if (Array.isArray(child.material)) child.material.forEach((mat) => mat.dispose?.());
-    else child.material?.dispose?.();
+    if (Array.isArray(child.material)) {
+      child.material.forEach((mat) => {
+        mat.map?.dispose?.();
+        mat.dispose?.();
+      });
+    } else {
+      child.material?.map?.dispose?.();
+      child.material?.dispose?.();
+    }
   });
 }
 
@@ -5066,6 +5405,7 @@ window.render_game_to_text = () => {
     activeLevel: state.activeLevel,
     showAllLevels: state.showAllLevels,
     room: {
+      label: state.room.label,
       width: state.room.width,
       depth: state.room.depth,
       widthUs: formatLength(state.room.width),
@@ -5091,10 +5431,12 @@ window.render_game_to_text = () => {
     })),
     activeAsset: state.activeAssetId,
     toolMode: state.toolMode,
+    layerVisibility: state.layerVisibility,
     preview: {
       visible: state.preview.visible,
       count: state.preview.count,
       gridVisible: placementPreviewGrid.visible,
+      openingHighlightVisible: openingPreviewGroup.visible,
     },
     highFidelity: state.highFidelity,
     tour: {
