@@ -47,7 +47,7 @@ const PROJECTS_KEY = "homeforge-room-studio-projects-v1";
 const GRID_SIZE = 0.25;
 const ROOM_HEIGHT = 3;
 const WALL_THICKNESS = 0.16;
-const LEVEL_HEIGHT = 3.35;
+const LEVEL_HEIGHT = ROOM_HEIGHT + 0.14;
 const LOT_LIMIT = 60;
 const ROOF_OVERHANG = 1.2;
 const FENCE_SPACING = 2.05;
@@ -61,10 +61,10 @@ const DRAG_BUILD_KINDS = new Set(["interior-wall", "fence", "tree", "shrub", "he
 const ASSETS = [
   { id: "template-kitchen", label: "Kitchen Template", category: "rooms", kind: "room-template", color: "#d7cab4", material: "painted", width: 7, depth: 5.5 },
   { id: "template-bathroom", label: "Bathroom Template", category: "rooms", kind: "room-template", color: "#d8d1c3", material: "painted", width: 5, depth: 4 },
-  { id: "room-module", label: "Room Module", category: "rooms", kind: "room-module", color: "#d6c9b7", material: "painted", thumb: [0, 0] },
-  { id: "wide-room", label: "Wide Room", category: "rooms", kind: "room-module", color: "#d8ccb8", material: "painted", width: 6, depth: 4, thumb: [0, 0] },
-  { id: "small-room", label: "Small Room", category: "rooms", kind: "room-module", color: "#d5c5b0", material: "painted", width: 4, depth: 4, thumb: [0, 0] },
-  { id: "door", label: "Open Door", category: "structure", kind: "door", color: "#8f5c32", material: "wood", thumb: [0, 0] },
+  { id: "room-module", label: "Room Module", category: "structure", kind: "room-module", color: "#d6c9b7", material: "painted", thumb: [0, 0] },
+  { id: "wide-room", label: "Wide Room", category: "structure", kind: "room-module", color: "#d8ccb8", material: "painted", width: 6, depth: 4, thumb: [0, 0] },
+  { id: "small-room", label: "Small Room", category: "structure", kind: "room-module", color: "#d5c5b0", material: "painted", width: 4, depth: 4, thumb: [0, 0] },
+  { id: "door", label: "Door", category: "structure", kind: "door", color: "#8f5c32", material: "wood", thumb: [0, 0] },
   { id: "sliding-patio-door", label: "Sliding Patio Door", category: "structure", kind: "sliding-patio-door", color: "#8daeb4", material: "metal", thumb: [0, 0] },
   { id: "french-patio-door", label: "French Patio Doors", category: "structure", kind: "french-patio-door", color: "#9f744a", material: "wood", thumb: [0, 0] },
   { id: "window", label: "Window", category: "structure", kind: "window", color: "#9fc8ce", material: "metal", thumb: [0, 0] },
@@ -153,6 +153,10 @@ const ASSETS = [
 ];
 
 const VARIANTS = {
+  door: [
+    { id: "open", label: "Open" },
+    { id: "closed", label: "Closed" },
+  ],
   sofa: [
     { id: "classic", label: "Classic" },
     { id: "sectional", label: "Sectional" },
@@ -373,6 +377,7 @@ const dragState = {
   startPosition: new THREE.Vector3(),
   roomStart: new THREE.Vector3(),
   roomContents: [],
+  wallContents: [],
   selectedStarts: [],
 };
 const thumbnailCache = new Map();
@@ -479,13 +484,11 @@ function buildRoom() {
 }
 
 function addRoomShell(group, width, depth, wallColor, floorColor, roomId = "main", exteriorMaterial = "siding") {
-  const floor = addBox(group, [width, 0.12, depth], [0, 0.03, 0], makeMat(floorColor, "wood"), "Room floor");
-  floor.receiveShadow = true;
-
   const wallMat = makeMat(wallColor, "painted");
   const exteriorMat = makeMat(wallColor, exteriorMaterial || "siding");
   const openings = getWallOpeningsForRoom(roomId);
   const roomBounds = getRoomBoundsById(roomId) || { id: "main", x: 0, z: 0, width, depth };
+  addRoomFloor(group, width, depth, makeMat(floorColor, "wood"), getFloorOpeningsForRoom(roomBounds), roomBounds);
   addWallWithOpenings(group, "back", width, depth, wallMat, openings, exteriorMat, roomBounds);
   addWallWithOpenings(group, "left", width, depth, wallMat, openings, exteriorMat, roomBounds);
   addWallWithOpenings(group, "right", width, depth, wallMat, openings, exteriorMat, roomBounds);
@@ -496,6 +499,29 @@ function addRoomShell(group, width, depth, wallColor, floorColor, roomId = "main
   addWallTrim(group, "right", width, depth, trim, openings);
   if (state.shellClosed) addWallTrim(group, "front", width, depth, trim, openings);
   addRoomGrid(group, width, depth);
+}
+
+function addRoomFloor(group, width, depth, floorMat, openings = []) {
+  const relevant = openings.filter(Boolean);
+  if (!relevant.length) {
+    const floor = addBox(group, [width, 0.12, depth], [0, 0.03, 0], floorMat, "Room floor");
+    floor.receiveShadow = true;
+    return;
+  }
+  const opening = relevant[0];
+  const minX = THREE.MathUtils.clamp(opening.x - opening.width / 2, -width / 2, width / 2);
+  const maxX = THREE.MathUtils.clamp(opening.x + opening.width / 2, -width / 2, width / 2);
+  const minZ = THREE.MathUtils.clamp(opening.z - opening.depth / 2, -depth / 2, depth / 2);
+  const maxZ = THREE.MathUtils.clamp(opening.z + opening.depth / 2, -depth / 2, depth / 2);
+  const addFloorSegment = (x1, x2, z1, z2) => {
+    if (x2 - x1 <= 0.05 || z2 - z1 <= 0.05) return;
+    const floor = addBox(group, [x2 - x1, 0.12, z2 - z1], [(x1 + x2) / 2, 0.03, (z1 + z2) / 2], floorMat, "Room floor");
+    floor.receiveShadow = true;
+  };
+  addFloorSegment(-width / 2, minX, -depth / 2, depth / 2);
+  addFloorSegment(maxX, width / 2, -depth / 2, depth / 2);
+  addFloorSegment(minX, maxX, -depth / 2, minZ);
+  addFloorSegment(minX, maxX, maxZ, depth / 2);
 }
 
 function tagRoomGroup(group, uid) {
@@ -844,7 +870,7 @@ function wireUi() {
   canvasWrap.addEventListener("drop", (event) => {
     event.preventDefault();
     const assetId = event.dataTransfer.getData("text/plain");
-    const point = eventToGroundPoint(event);
+    const point = eventToPlacementPoint(event, assetId);
     if (assetId && point && canPlaceAsset(assetId, point)) placeAsset(assetId, point);
   });
 
@@ -1016,6 +1042,11 @@ function wireUi() {
       duplicateSelected();
       return;
     }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "x") {
+      event.preventDefault();
+      deleteSelected();
+      return;
+    }
     if (event.key.toLowerCase() === "f") toggleFullscreen();
     if (state.viewMode === "walk" && ["arrowup", "arrowdown", "arrowleft", "arrowright", "w", "a", "s", "d"].includes(event.key.toLowerCase())) {
       walkState.keys.add(event.key.toLowerCase());
@@ -1113,6 +1144,7 @@ function placeAsset(assetId, point, recordHistory = true) {
     roomCluster: asset.kind === "roof" ? containingRoom?.roomIds || [] : undefined,
     buildGroupId: null,
     locked: false,
+    targetWallId: null,
   };
   entry.group = createAssetGroup(entry);
   scene.add(entry.group);
@@ -1126,7 +1158,7 @@ function placeAsset(assetId, point, recordHistory = true) {
     flashHint(`${asset.label} needs more room.`);
     return;
   }
-  if (isWallOpeningEntry(entry)) rebuildRoomShells();
+  if (isWallOpeningEntry(entry)) rebuildForOpenings([entry]);
   selectObject(entry.uid);
   updateLevelVisibility();
   state.activeAssetId = null;
@@ -1191,6 +1223,7 @@ function placeRoomTemplate(asset, point, recordHistory = true) {
       roomId: roomEntry.uid,
       buildGroupId: null,
       locked: false,
+      targetWallId: null,
     };
     entry.group = createAssetGroup(entry);
     scene.add(entry.group);
@@ -1311,8 +1344,13 @@ function createDoor(group, entry) {
   addBox(group, [1.05, 0.14, 0.16], [0, 2.08, 0], frame, "Door header");
   addBox(group, [0.14, 2.1, 0.16], [-0.54, 1.05, 0], frame, "Door frame");
   addBox(group, [0.14, 2.1, 0.16], [0.54, 1.05, 0], frame, "Door frame");
-  const slab = addBox(group, [0.52, 1.82, 0.1], [0.36, 0.91, 0.26], wood, "Open door slab");
-  slab.rotation.y = -Math.PI / 3;
+  if ((entry.variant || "open") === "closed") {
+    addBox(group, [0.88, 1.86, 0.1], [0, 0.93, 0.02], wood, "Closed door slab");
+    addBox(group, [0.1, 0.08, 0.08], [0.3, 1.02, 0.12], makeMat("#d0aa5b", "metal"), "Door knob");
+  } else {
+    const slab = addBox(group, [0.52, 1.82, 0.1], [0.36, 0.91, 0.26], wood, "Open door slab");
+    slab.rotation.y = -Math.PI / 3;
+  }
 }
 
 function createPatioDoor(group, entry) {
@@ -1890,11 +1928,46 @@ function createStructureAsset(group, entry) {
 function createInteriorWall(group, entry) {
   const length = Math.max(entry.width || 2, GRID_SIZE * 2);
   const thickness = entry.depth || WALL_THICKNESS;
-  const wall = addBox(group, [length, ROOM_HEIGHT, thickness], [0, ROOM_HEIGHT / 2, 0], makeMat(entry.color, entry.material), "Interior partition wall");
-  wall.receiveShadow = true;
-  addBox(group, [length + 0.04, 0.12, 0.08], [0, 0.16, thickness / 2 + 0.035], makeMat("#f5efe1", "painted"), "Interior wall baseboard");
-  addBox(group, [length + 0.04, 0.12, 0.08], [0, 0.16, -thickness / 2 - 0.035], makeMat("#f5efe1", "painted"), "Interior wall baseboard");
-  addBox(group, [length + 0.08, 0.12, thickness + 0.08], [0, ROOM_HEIGHT + 0.04, 0], makeMat("#f5efe1", "painted"), "Interior wall cap");
+  const wallMat = makeMat(entry.color, entry.material);
+  const trimMat = makeMat("#f5efe1", "painted");
+  const openings = getInteriorWallOpenings(entry);
+  const addSegment = (start, end, yStart, yEnd, label) => {
+    const segmentLength = end - start;
+    const segmentHeight = yEnd - yStart;
+    if (segmentLength <= 0.05 || segmentHeight <= 0.05) return;
+    const wall = addBox(group, [segmentLength, segmentHeight, thickness], [(start + end) / 2, yStart + segmentHeight / 2, 0], wallMat, label);
+    wall.receiveShadow = true;
+  };
+  let cursor = -length / 2;
+  openings.forEach((opening) => {
+    const half = opening.width / 2;
+    addSegment(cursor, opening.offset - half, 0, ROOM_HEIGHT, "Interior partition wall");
+    addSegment(opening.offset - half, opening.offset + half, opening.top, ROOM_HEIGHT, "Interior wall header");
+    if (opening.bottom > 0) addSegment(opening.offset - half, opening.offset + half, 0, opening.bottom, "Interior wall sill");
+    cursor = opening.offset + half;
+  });
+  addSegment(cursor, length / 2, 0, ROOM_HEIGHT, "Interior partition wall");
+  addInteriorWallTrim(group, length, thickness, openings, trimMat, thickness / 2 + 0.035);
+  addInteriorWallTrim(group, length, thickness, openings, trimMat, -thickness / 2 - 0.035);
+}
+
+function addInteriorWallTrim(group, length, thickness, openings, material, z) {
+  const trimHeight = 0.12;
+  const trimDepth = 0.08;
+  let cursor = -length / 2;
+  openings
+    .filter((opening) => opening.bottom <= 0.05)
+    .forEach((opening) => {
+      const half = opening.width / 2;
+      addInteriorTrimSegment(group, cursor, opening.offset - half, z, trimHeight, trimDepth, material);
+      cursor = opening.offset + half;
+    });
+  addInteriorTrimSegment(group, cursor, length / 2, z, trimHeight, trimDepth, material);
+}
+
+function addInteriorTrimSegment(group, start, end, z, height, depth, material) {
+  if (end - start <= 0.05) return;
+  addBox(group, [end - start, height, depth], [(start + end) / 2, 0.16, z], material, "Interior wall baseboard");
 }
 
 function createGableRoof(group, entry, width, depth) {
@@ -2147,7 +2220,7 @@ function onPointerDown(event) {
     flashHint("Drag to look around. Use arrows or WASD to move.");
     return;
   }
-  const point = eventToGroundPoint(event);
+  const point = state.activeAssetId ? eventToPlacementPoint(event, state.activeAssetId) : eventToGroundPoint(event);
   if (state.toolMode === "bulldoze") {
     clearPlacementPreview();
     state.bulldozing = true;
@@ -2203,8 +2276,13 @@ function onPointerDown(event) {
           .filter((item) => item.roomId === entry.uid)
           .map((item) => ({ entry: item, position: item.group.position.clone() }))
       : [];
+    dragState.wallContents = isInteriorWallEntry(entry)
+      ? state.objects
+          .filter((item) => item.targetWallId === entry.uid)
+          .map((item) => ({ entry: item, position: item.group.position.clone() }))
+      : [];
     dragState.selectedStarts = selectedEntries
-      .filter((item) => item.uid !== entry.uid)
+      .filter((item) => item.uid !== entry.uid && !dragState.wallContents.some((wallItem) => wallItem.entry.uid === item.uid))
       .map((item) => ({ entry: item, position: item.group.position.clone() }));
     orbit.enabled = false;
     renderer.domElement.setPointerCapture(event.pointerId);
@@ -2241,12 +2319,13 @@ function onPointerMove(event) {
     return;
   }
   clearPlacementPreview();
-  const point = eventToGroundPoint(event);
+  const point = eventToPlacementPoint(event, state.activeAssetId);
   if (!point) return;
   const next = point.sub(dragState.offset);
   dragState.entry.group.position.set(next.x, 0, next.z);
   clampEntryToRoom(dragState.entry);
   moveRoomContentsWithDrag();
+  moveWallContentsWithDrag();
   moveSelectedWithDrag();
   syncEntry(dragState.entry);
   dragState.moved = true;
@@ -2280,10 +2359,15 @@ function onPointerUp(event) {
     clampEntryToRoom(dragState.entry);
     snapSelectedDragEntries();
     moveRoomContentsWithDrag();
-    const movedEntries = [dragState.entry, ...dragState.selectedStarts.map((item) => item.entry)];
+    moveWallContentsWithDrag();
+    const movedEntries = [dragState.entry, ...dragState.wallContents.map((item) => item.entry), ...dragState.selectedStarts.map((item) => item.entry)];
     const ignoreIds = new Set(movedEntries.map((entry) => entry.uid));
     if (movedEntries.some((entry) => hasPlacementCollision(entry, ignoreIds))) {
       dragState.entry.group.position.copy(dragState.startPosition);
+      dragState.wallContents.forEach(({ entry, position }) => {
+        entry.group.position.copy(position);
+        syncEntry(entry);
+      });
       dragState.selectedStarts.forEach(({ entry, position }) => {
         entry.group.position.copy(position);
         syncEntry(entry);
@@ -2295,12 +2379,14 @@ function onPointerUp(event) {
       syncEntry(entry);
       rememberRotation(entry);
     });
-    if (movedEntries.some(isWallOpeningEntry) || movedEntries.some(isRoomEntry)) rebuildRoomShells();
+    if (movedEntries.some(isWallOpeningEntry)) rebuildForOpenings(movedEntries.filter(isWallOpeningEntry));
+    else if (movedEntries.some(isRoomEntry)) rebuildRoomShells();
     pushHistory();
   }
   dragState.entry = null;
   dragState.moved = false;
   dragState.roomContents = [];
+  dragState.wallContents = [];
   dragState.selectedStarts = [];
   orbit.enabled = true;
 }
@@ -2309,6 +2395,16 @@ function moveRoomContentsWithDrag() {
   if (!isRoomEntry(dragState.entry) || !dragState.roomContents.length) return;
   const delta = dragState.entry.group.position.clone().sub(dragState.roomStart);
   dragState.roomContents.forEach(({ entry, position }) => {
+    entry.group.position.copy(position).add(delta);
+    entry.group.position.y = getLevelY(entry.level || dragState.entry.level || 1);
+    syncEntry(entry);
+  });
+}
+
+function moveWallContentsWithDrag() {
+  if (!isInteriorWallEntry(dragState.entry) || !dragState.wallContents.length) return;
+  const delta = dragState.entry.group.position.clone().sub(dragState.startPosition);
+  dragState.wallContents.forEach(({ entry, position }) => {
     entry.group.position.copy(position).add(delta);
     entry.group.position.y = getLevelY(entry.level || dragState.entry.level || 1);
     syncEntry(entry);
@@ -3107,28 +3203,86 @@ function duplicateSelected() {
 }
 
 function copySelected() {
-  const entry = getSelectedEntry();
-  if (!entry) return;
-  if (isMainRoomEntry(entry)) {
+  const selected = getSelectedEntries().filter((entry) => !isMainRoomEntry(entry));
+  if (!selected.length) {
     flashHint("Initial room cannot be copied.");
     return;
   }
-  syncEntry(entry);
-  state.clipboard = stripRuntimeFields(entry);
-  flashHint(`${entry.label} copied.`);
+  selected.forEach(syncEntry);
+  if (selected.length === 1) {
+    state.clipboard = { type: "single", entry: stripRuntimeFields(selected[0]) };
+    flashHint(`${selected[0].label} copied.`);
+    return;
+  }
+  const anchor = selected[0].position;
+  state.clipboard = {
+    type: "group",
+    entries: selected.map((entry) => ({
+      ...stripRuntimeFields(entry),
+      relativePosition: [entry.position[0] - anchor[0], entry.position[1] - anchor[1], entry.position[2] - anchor[2]],
+    })),
+  };
+  flashHint(`${selected.length} items copied.`);
 }
 
 function pasteCopied() {
   if (!state.clipboard) return;
+  if (state.clipboard.type === "group") {
+    pasteCopiedGroup();
+    return;
+  }
+  const source = state.clipboard.entry || state.clipboard;
   const copy = {
-    ...state.clipboard,
+    ...source,
     uid: crypto.randomUUID(),
-    position: [snap(state.clipboard.position[0] + GRID_SIZE * 3), getLevelY(state.clipboard.level || 1), snap(state.clipboard.position[2] + GRID_SIZE * 3)],
-    roomCluster: state.clipboard.roomCluster ? [...state.clipboard.roomCluster] : undefined,
+    position: [snap(source.position[0] + GRID_SIZE * 3), getLevelY(source.level || 1), snap(source.position[2] + GRID_SIZE * 3)],
+    roomCluster: source.roomCluster ? [...source.roomCluster] : undefined,
+    buildGroupId: null,
+    targetWallId: null,
     locked: false,
   };
   addCopiedEntry(copy, `${copy.label} pasted.`);
-  state.clipboard = stripRuntimeFields(copy);
+  state.clipboard = { type: "single", entry: stripRuntimeFields(copy) };
+}
+
+function pasteCopiedGroup() {
+  const entries = state.clipboard.entries || [];
+  if (!entries.length) return;
+  const anchor = entries[0].position;
+  const groupMap = new Map();
+  const idMap = new Map();
+  const copies = entries.map((entry) => {
+    if (entry.buildGroupId && !groupMap.has(entry.buildGroupId)) groupMap.set(entry.buildGroupId, crypto.randomUUID());
+    const uid = crypto.randomUUID();
+    idMap.set(entry.uid, uid);
+    return {
+      ...entry,
+      uid,
+      position: [
+        snap(anchor[0] + (entry.relativePosition?.[0] || 0) + GRID_SIZE * 3),
+        getLevelY(entry.level || 1),
+        snap(anchor[2] + (entry.relativePosition?.[2] || 0) + GRID_SIZE * 3),
+      ],
+      roomCluster: entry.roomCluster ? [...entry.roomCluster] : undefined,
+      buildGroupId: entry.buildGroupId ? groupMap.get(entry.buildGroupId) : null,
+      locked: false,
+    };
+  });
+  copies.forEach((copy) => {
+    if (copy.targetWallId) copy.targetWallId = idMap.get(copy.targetWallId) || null;
+    copy.group = createAssetGroup(copy);
+    scene.add(copy.group);
+    state.objects.push(copy);
+    clampEntryToRoom(copy);
+    syncEntry(copy);
+  });
+  state.selectedIds = new Set(copies.map((entry) => entry.uid));
+  state.selectedId = copies.at(-1)?.uid || null;
+  rebuildRoomShells();
+  updateInspector();
+  updateSelectionHelper();
+  pushHistory();
+  flashHint(`${copies.length} items pasted as a new group.`);
 }
 
 function createEntryCopy(entry, offsetX = GRID_SIZE * 2, offsetZ = GRID_SIZE * 2) {
@@ -3163,7 +3317,7 @@ function addCopiedEntry(copy, message) {
   }
   syncEntry(copy);
   selectObject(copy.uid);
-  if (isWallOpeningEntry(copy)) rebuildRoomShells();
+  if (isWallOpeningEntry(copy)) rebuildForOpenings([copy]);
   pushHistory();
   flashHint(message);
 }
@@ -3182,7 +3336,11 @@ function deleteSelected() {
   }
   const expanded = new Map();
   deletable.forEach((entry) => {
-    const entries = isRoomEntry(entry) ? state.objects.filter((item) => item.uid === entry.uid || item.roomId === entry.uid) : [entry];
+    const entries = isRoomEntry(entry)
+      ? state.objects.filter((item) => item.uid === entry.uid || item.roomId === entry.uid)
+      : isInteriorWallEntry(entry)
+        ? state.objects.filter((item) => item.uid === entry.uid || item.targetWallId === entry.uid)
+        : [entry];
     entries.forEach((item) => expanded.set(item.uid, item));
   });
   const entriesToDelete = [...expanded.values()];
@@ -3207,7 +3365,11 @@ function deleteEntry(entry, { record = true, announce = true } = {}) {
     flashHint(`${entry.label} is locked. Unlock it to delete.`);
     return false;
   }
-  const entriesToDelete = isRoomEntry(entry) ? state.objects.filter((item) => item.uid === entry.uid || item.roomId === entry.uid) : [entry];
+  const entriesToDelete = isRoomEntry(entry)
+    ? state.objects.filter((item) => item.uid === entry.uid || item.roomId === entry.uid)
+    : isInteriorWallEntry(entry)
+      ? state.objects.filter((item) => item.uid === entry.uid || item.targetWallId === entry.uid)
+      : [entry];
   entriesToDelete.forEach((item) => {
     scene.remove(item.group);
     disposeObject(item.group);
@@ -3365,17 +3527,49 @@ function pushHistory() {
 
 function undo() {
   if (state.history.length < 2) return;
+  const viewState = captureViewState();
   state.future.push(state.history.pop());
   deserialize(JSON.parse(state.history.at(-1)), false);
+  restoreViewState(viewState);
   flashHint("Undo");
 }
 
 function redo() {
   if (!state.future.length) return;
+  const viewState = captureViewState();
   const next = state.future.pop();
   state.history.push(next);
   deserialize(JSON.parse(next), false);
+  restoreViewState(viewState);
   flashHint("Redo");
+}
+
+function captureViewState() {
+  return {
+    mode: state.viewMode,
+    cameraPosition: camera.position.clone(),
+    cameraRotation: camera.rotation.clone(),
+    orbitTarget: orbit.target.clone(),
+    yaw: walkState.yaw,
+    pitch: walkState.pitch,
+  };
+}
+
+function restoreViewState(viewState) {
+  state.viewMode = viewState.mode;
+  document.querySelector("#iso-view").classList.toggle("active", state.viewMode === "iso");
+  document.querySelector("#top-view").classList.toggle("active", state.viewMode === "top");
+  document.querySelector("#walk-view").classList.toggle("active", state.viewMode === "walk");
+  tourViewBtn.classList.toggle("active", state.viewMode === "tour");
+  tourState.active = state.viewMode === "tour";
+  orbit.enabled = !["walk", "tour"].includes(state.viewMode);
+  walkState.yaw = viewState.yaw;
+  walkState.pitch = viewState.pitch;
+  camera.position.copy(viewState.cameraPosition);
+  camera.rotation.copy(viewState.cameraRotation);
+  orbit.target.copy(viewState.orbitTarget);
+  if (state.viewMode === "walk") applyWalkCameraRotation();
+  else orbit.update();
 }
 
 function serialize() {
@@ -3428,6 +3622,7 @@ function serialize() {
       locked: entry.locked,
       wallSide: entry.wallSide,
       wallOffset: entry.wallOffset,
+      targetWallId: entry.targetWallId,
       roomCluster: entry.roomCluster,
     })),
   };
@@ -3499,6 +3694,7 @@ function deserialize(payload, recordHistory = true) {
       locked: Boolean(item.locked),
       wallSide: item.wallSide,
       wallOffset: item.wallOffset,
+      targetWallId: item.targetWallId,
       roomCluster: item.roomCluster,
     };
     entry.group = createAssetGroup(entry);
@@ -3676,14 +3872,50 @@ function updateWalk(delta) {
   const move = new THREE.Vector3(strafe, 0, -forward);
   move.normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), walkState.yaw).multiplyScalar(walkState.speed * delta);
   const nextPosition = camera.position.clone().add(move);
-  if (canWalkToPosition(camera.position, nextPosition)) {
+  const stairHeight = getWalkStairHeight(nextPosition);
+  if (stairHeight !== null) {
     camera.position.copy(nextPosition);
+    camera.position.y = stairHeight;
+  } else if (canWalkToPosition(camera.position, nextPosition)) {
+    camera.position.copy(nextPosition);
+    camera.position.y = getLevelY(levelFromY(camera.position.y)) + 1.55;
   } else {
     const currentRoom = findContainingRoomBounds(camera.position, -0.05) || getEntryRoomBounds(null);
     camera.position.x = THREE.MathUtils.clamp(nextPosition.x, currentRoom.x - currentRoom.width / 2 + 0.35, currentRoom.x + currentRoom.width / 2 - 0.35);
     camera.position.z = THREE.MathUtils.clamp(nextPosition.z, currentRoom.z - currentRoom.depth / 2 + 0.35, currentRoom.z + currentRoom.depth / 2 - 0.35);
+    camera.position.y = getLevelY(levelFromY(camera.position.y)) + 1.55;
   }
-  camera.position.y = getLevelY(levelFromY(camera.position.y)) + 1.55;
+}
+
+function getWalkStairHeight(position) {
+  const candidate = state.objects
+    .filter(isFullStoryStairEntry)
+    .map((entry) => getStairWalkCandidate(entry, position))
+    .filter(Boolean)
+    .sort((a, b) => a.distance - b.distance)[0];
+  return candidate ? candidate.y : null;
+}
+
+function getStairWalkCandidate(entry, position) {
+  const local = entry.group.worldToLocal(position.clone());
+  const wide = entry.kind === "wide-stairs";
+  const treadWidth = wide ? 2.2 : 1.25;
+  if (entry.variant === "switchback-second-floor") {
+    const laneOffset = treadWidth * 0.72;
+    const onLower = Math.abs(local.x + laneOffset) <= treadWidth / 2 + 0.45 && local.z >= -1.35 && local.z <= 1.8;
+    const onUpper = Math.abs(local.x - laneOffset) <= treadWidth / 2 + 0.45 && local.z >= -1.75 && local.z <= 1.55;
+    const onLanding = Math.abs(local.x) <= treadWidth + 0.5 && local.z >= 0.85 && local.z <= 1.95;
+    if (!onLower && !onUpper && !onLanding) return null;
+    let progress = 0;
+    if (onLower) progress = THREE.MathUtils.clamp((local.z + 1.2) / (0.34 * 8), 0, 0.5);
+    else if (onUpper) progress = 0.5 + THREE.MathUtils.clamp((1.35 - local.z) / (0.34 * 8), 0, 0.5);
+    else progress = 0.5;
+    return { y: getLevelY(entry.level || 1) + 1.55 + progress * LEVEL_HEIGHT, distance: Math.abs(local.x) + Math.abs(local.z) * 0.05 };
+  }
+  const runLength = 14 * 0.38 + 1.05;
+  if (Math.abs(local.x) > treadWidth / 2 + 0.45 || local.z < -1.25 || local.z > -1.15 + runLength) return null;
+  const progress = THREE.MathUtils.clamp((local.z + 1.15) / runLength, 0, 1);
+  return { y: getLevelY(entry.level || 1) + 1.55 + progress * LEVEL_HEIGHT, distance: Math.abs(local.x) };
 }
 
 function getSelectedRoomEntry() {
@@ -3806,6 +4038,29 @@ function eventToGroundPoint(event) {
   return raycaster.ray.intersectPlane(activeLevelPlane, hitPoint)?.clone();
 }
 
+function eventToPlacementPoint(event, assetId) {
+  const asset = ASSETS.find((entry) => entry.id === assetId);
+  if (!isWallOpeningAsset(asset)) return eventToGroundPoint(event);
+  setPointer(event);
+  raycaster.setFromCamera(pointer, camera);
+  const wallMeshes = [
+    ...getMeshes(roomGroup),
+    ...state.objects
+      .filter((entry) => isRoomEntry(entry) || isInteriorWallEntry(entry))
+      .flatMap((entry) => getMeshes(entry.group)),
+  ];
+  const hit = raycaster
+    .intersectObjects(wallMeshes, true)
+    .filter((item) => isObjectVisible(item.object) && item.object.userData.selectable && /wall|partition/i.test(item.object.name || ""))
+    .sort((a, b) => a.distance - b.distance)[0];
+  if (hit) {
+    const point = hit.point.clone();
+    point.y = getLevelY(levelFromY(point.y));
+    return point;
+  }
+  return eventToGroundPoint(event);
+}
+
 function setPointer(event) {
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -3907,6 +4162,40 @@ function getAllRoomBounds() {
   ];
 }
 
+function getFloorOpeningsForRoom(room) {
+  if ((room.level || 1) <= 1) return [];
+  return state.objects
+    .filter((entry) => isFullStoryStairEntry(entry) && (entry.level || 1) === room.level - 1)
+    .map((entry) => getStairTopOpening(entry, room))
+    .filter(Boolean);
+}
+
+function isFullStoryStairEntry(entry) {
+  return ["stairs", "wide-stairs"].includes(entry?.kind) && ["second-floor", "switchback-second-floor"].includes(entry.variant);
+}
+
+function getStairTopOpening(entry, room) {
+  const wide = entry.kind === "wide-stairs";
+  const treadWidth = wide ? 2.2 : 1.25;
+  const variant = entry.variant || "straight";
+  const topLocal = variant === "switchback-second-floor"
+    ? new THREE.Vector3(treadWidth * 0.72, 0, -1.55)
+    : new THREE.Vector3(0, 0, -1.15 + 14 * 0.38 + 0.22);
+  const topWorld = entry.group.localToWorld(topLocal.clone());
+  if (
+    topWorld.x < room.x - room.width / 2 ||
+    topWorld.x > room.x + room.width / 2 ||
+    topWorld.z < room.z - room.depth / 2 ||
+    topWorld.z > room.z + room.depth / 2
+  ) return null;
+  return {
+    x: topWorld.x - room.x,
+    z: topWorld.z - room.z,
+    width: treadWidth + 1.05,
+    depth: variant === "switchback-second-floor" ? 1.55 : 1.85,
+  };
+}
+
 function collectConnectedRooms(seed, rooms) {
   const connected = new Map([[seed.id, seed]]);
   let grew = true;
@@ -4002,11 +4291,19 @@ function segmentCrossesWall(entry, currentPosition, nextPosition) {
   if (alongX) {
     const crosses = (currentPosition.z - pos.z) * (nextPosition.z - pos.z) <= 0 && Math.abs(currentPosition.z - nextPosition.z) > 0.001;
     const xAtWall = currentPosition.x + ((pos.z - currentPosition.z) / (nextPosition.z - currentPosition.z || 1)) * (nextPosition.x - currentPosition.x);
-    return crosses && xAtWall >= pos.x - half && xAtWall <= pos.x + half;
+    if (!(crosses && xAtWall >= pos.x - half && xAtWall <= pos.x + half)) return false;
+    return !hasInteriorWallPassageAt(entry, xAtWall - pos.x);
   }
   const crosses = (currentPosition.x - pos.x) * (nextPosition.x - pos.x) <= 0 && Math.abs(currentPosition.x - nextPosition.x) > 0.001;
   const zAtWall = currentPosition.z + ((pos.x - currentPosition.x) / (nextPosition.x - currentPosition.x || 1)) * (nextPosition.z - currentPosition.z);
-  return crosses && zAtWall >= pos.z - half && zAtWall <= pos.z + half;
+  if (!(crosses && zAtWall >= pos.z - half && zAtWall <= pos.z + half)) return false;
+  return !hasInteriorWallPassageAt(entry, zAtWall - pos.z);
+}
+
+function hasInteriorWallPassageAt(wallEntry, offset) {
+  return getInteriorWallOpenings(wallEntry)
+    .filter((opening) => isPassageOpeningEntry(opening.entry))
+    .some((opening) => Math.abs(offset - opening.offset) <= opening.width / 2 + 0.28);
 }
 
 function hasPassageBetweenRooms(fromRoom, toRoom, currentPosition, nextPosition) {
@@ -4038,12 +4335,38 @@ function getWallOpeningsForRoom(roomId) {
   if (!room) return [];
   return state.objects
     .filter(isWallOpeningEntry)
+    .filter((entry) => !entry.targetWallId)
     .filter((entry) => openingAppliesToRoom(entry, room))
     .map((entry) => getOpeningForRoomRaw(entry, room))
     .filter(Boolean);
 }
 
+function getInteriorWallOpenings(wallEntry) {
+  return state.objects
+    .filter((entry) => isWallOpeningEntry(entry) && entry.targetWallId === wallEntry.uid)
+    .map((entry) => ({
+      entry,
+      offset: THREE.MathUtils.clamp(entry.wallOffset ?? getInteriorWallOffsetForEntry(entry, wallEntry), -((wallEntry.width || 1) / 2), (wallEntry.width || 1) / 2),
+      width: getOpeningWidth(entry),
+      bottom: entry.kind === "window" ? 0.9 : 0,
+      top: entry.kind === "window" ? 1.92 : ["sliding-patio-door", "french-patio-door"].includes(entry.kind) ? 2.34 : 2.24,
+    }))
+    .sort((a, b) => a.offset - b.offset);
+}
+
+function getInteriorWallOffsetForEntry(entry, wallEntry) {
+  const alongX = Math.abs(Math.sin(wallEntry.rotationY || wallEntry.group?.rotation.y || 0)) < 0.5;
+  const position = entry.group?.position || new THREE.Vector3(...entry.position);
+  const wallPosition = wallEntry.group?.position || new THREE.Vector3(...wallEntry.position);
+  return alongX ? position.x - wallPosition.x : position.z - wallPosition.z;
+}
+
+function getOpeningWidth(entry) {
+  return entry.kind === "window" ? 1.35 : ["sliding-patio-door", "french-patio-door"].includes(entry.kind) ? 1.9 : 1.22;
+}
+
 function getOpeningForRoom(entry, room) {
+  if (entry.targetWallId) return null;
   if (!openingAppliesToRoom(entry, room)) return null;
   return getOpeningForRoomRaw(entry, room);
 }
@@ -4073,7 +4396,7 @@ function getOpeningForRoomRaw(entry, room) {
   ];
   const nearest = wallCandidates.sort((a, b) => a.distance - b.distance)[0];
   if (!nearest || nearest.distance > 0.34) return null;
-  const openingWidth = entry.kind === "window" ? 1.35 : ["sliding-patio-door", "french-patio-door"].includes(entry.kind) ? 1.9 : 1.22;
+  const openingWidth = getOpeningWidth(entry);
   const maxOffset = nearest.axisLength / 2 - openingWidth / 2 - 0.2;
   if (Math.abs(nearest.offset) > nearest.axisLength / 2 + 0.1) return null;
   return {
@@ -4088,7 +4411,19 @@ function getOpeningForRoomRaw(entry, room) {
 function rebuildRoomShells() {
   buildRoom();
   state.objects.filter(isRoomEntry).forEach(rebuildEntry);
+  state.objects.filter(isInteriorWallEntry).forEach(rebuildEntry);
   updateRoofsForRooms();
+}
+
+function rebuildForOpenings(entries) {
+  const wallIds = new Set(entries.map((entry) => entry.targetWallId).filter(Boolean));
+  if (wallIds.size) {
+    wallIds.forEach((uid) => {
+      const wall = getEntryByUid(uid);
+      if (wall) rebuildEntry(wall);
+    });
+  }
+  if (entries.some((entry) => !entry.targetWallId)) rebuildRoomShells();
 }
 
 function updateRoofsForRooms() {
@@ -4239,6 +4574,11 @@ function snapEntryToWall(entry, createsOpening = false) {
     : null;
   const wall = preferredSharedWall || walls.sort((a, b) => a.distance - b.distance)[0];
   const isWideOpening = ["sliding-patio-door", "french-patio-door"].includes(entry.kind);
+  const interiorWall = createsOpening ? getNearestInteriorWallTarget(entry, room) : null;
+  if (interiorWall && interiorWall.distance <= wall.distance + 0.18) {
+    snapOpeningToInteriorWall(entry, interiorWall);
+    return;
+  }
   const widthMargin = entry.kind === "window" ? 0.75 : isWideOpening ? 1.0 : 0.62;
   const depthMargin = entry.kind === "window" ? 0.75 : isWideOpening ? 1.0 : 0.62;
   entry.group.position.x = ["left", "right"].includes(wall.side)
@@ -4251,7 +4591,38 @@ function snapEntryToWall(entry, createsOpening = false) {
   entry.group.rotation.y = wall.rotationY;
   entry.wallSide = wall.side;
   entry.wallOffset = ["left", "right"].includes(wall.side) ? entry.group.position.z - room.z : entry.group.position.x - room.x;
+  entry.targetWallId = null;
   entry.wallMounted = !createsOpening;
+  syncEntry(entry);
+}
+
+function getNearestInteriorWallTarget(entry, room) {
+  const openingWidth = getOpeningWidth(entry);
+  return state.objects
+    .filter((candidate) => isInteriorWallEntry(candidate) && (candidate.roomId || "main") === room.id && (candidate.level || 1) === (entry.level || room.level || 1))
+    .map((wall) => {
+      const alongX = Math.abs(Math.sin(wall.group.rotation.y)) < 0.5;
+      const offset = alongX ? entry.group.position.x - wall.group.position.x : entry.group.position.z - wall.group.position.z;
+      const distance = alongX ? Math.abs(entry.group.position.z - wall.group.position.z) : Math.abs(entry.group.position.x - wall.group.position.x);
+      const maxOffset = (wall.width || 1) / 2 - openingWidth / 2 - 0.18;
+      return { wall, alongX, offset: THREE.MathUtils.clamp(offset, -maxOffset, maxOffset), maxOffset, distance };
+    })
+    .filter((candidate) => candidate.maxOffset > 0 && candidate.distance < 0.85)
+    .sort((a, b) => a.distance - b.distance)[0] || null;
+}
+
+function snapOpeningToInteriorWall(entry, target) {
+  const { wall, alongX, offset } = target;
+  entry.roomId = wall.roomId || "main";
+  entry.level = wall.level || 1;
+  entry.group.position.x = alongX ? snap(wall.group.position.x + offset) : wall.group.position.x;
+  entry.group.position.z = alongX ? wall.group.position.z : snap(wall.group.position.z + offset);
+  entry.group.position.y = getLevelY(entry.level);
+  entry.group.rotation.y = wall.group.rotation.y;
+  entry.wallSide = "interior";
+  entry.wallOffset = offset;
+  entry.targetWallId = wall.uid;
+  entry.wallMounted = false;
   syncEntry(entry);
 }
 
@@ -4386,9 +4757,10 @@ function toggleFullscreen() {
 
 function flashHint(message) {
   dropHint.textContent = message;
+  dropHint.classList.add("active");
   clearTimeout(flashHint.timer);
   flashHint.timer = setTimeout(() => {
-    dropHint.textContent = "Choose an item, click once to place it, drag walls/fences/patios to build runs, then orbit or edit.";
+    dropHint.classList.remove("active");
   }, 1900);
 }
 
@@ -4754,6 +5126,7 @@ window.render_game_to_text = () => {
       exteriorMaterial: entry.exteriorMaterial || null,
       roomId: entry.roomId || null,
       wallSide: entry.wallSide || null,
+      targetWallId: entry.targetWallId || null,
       roomCluster: entry.roomCluster || null,
       buildGroupId: entry.buildGroupId || null,
     })),

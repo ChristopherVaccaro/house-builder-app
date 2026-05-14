@@ -303,6 +303,7 @@ button {
   left: 50%;
   bottom: 20px;
   transform: translateX(-50%);
+  opacity: 0;
   border: 1px solid rgba(97, 109, 99, 0.25);
   border-radius: 999px;
   background: rgba(255, 250, 242, 0.9);
@@ -310,6 +311,11 @@ button {
   padding: 8px 14px;
   font-size: 0.88rem;
   pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.drop-hint.active {
+  opacity: 1;
 }
 
 .inspector {
