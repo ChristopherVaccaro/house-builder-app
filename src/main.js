@@ -25,11 +25,14 @@ const roomDepthValue = document.querySelector("#room-depth-value");
 const wallColorInput = document.querySelector("#wall-color");
 const floorColorInput = document.querySelector("#floor-color");
 const exteriorMaterialInput = document.querySelector("#exterior-material");
+const roomJumpSelect = document.querySelector("#room-jump-select");
 const fidelityToggle = document.querySelector("#fidelity-toggle");
 const lockRoomBtn = document.querySelector("#lock-room-btn");
 const duplicateBtn = document.querySelector("#duplicate-btn");
+const randomizeVariantBtn = document.querySelector("#randomize-variant-btn");
 const deleteBtn = document.querySelector("#delete-btn");
 const tourViewBtn = document.querySelector("#tour-view");
+const frameViewBtn = document.querySelector("#frame-view");
 const roofsToggleBtn = document.querySelector("#roofs-toggle");
 const dozerBtn = document.querySelector("#dozer-btn");
 const levelOneBtn = document.querySelector("#level-1-btn");
@@ -47,6 +50,9 @@ const projectList = document.querySelector("#project-list");
 const projectPrimaryBtn = document.querySelector("#project-primary-btn");
 const projectSecondaryBtn = document.querySelector("#project-secondary-btn");
 const projectCloseBtn = document.querySelector("#project-close-btn");
+const exportBtn = document.querySelector("#export-btn");
+const importBtn = document.querySelector("#import-btn");
+const importFileInput = document.querySelector("#import-file-input");
 
 const STORAGE_KEY = "homeforge-room-studio-save-v1";
 const PROJECTS_KEY = "homeforge-room-studio-projects-v1";
@@ -975,9 +981,12 @@ function wireUi() {
     selectedName.textContent = state.selectedIds.size > 1
       ? `${state.selectedIds.size} items selected`
       : entry.locked ? `${entry.label} (locked)` : entry.label;
+    syncRoomNavigator();
     updateRoomLabels();
   });
   nameInput.addEventListener("change", pushHistory);
+
+  roomJumpSelect.addEventListener("change", () => focusRoom(roomJumpSelect.value));
 
   canvasWrap.addEventListener("dragover", (event) => {
     event.preventDefault();
@@ -1104,6 +1113,7 @@ function wireUi() {
   document.querySelector("#rotate-left").addEventListener("click", () => rotateSelected(-Math.PI / 8));
   document.querySelector("#rotate-right").addEventListener("click", () => rotateSelected(Math.PI / 8));
   duplicateBtn.addEventListener("click", duplicateSelected);
+  randomizeVariantBtn.addEventListener("click", randomizeSelectedVariant);
   lockRoomBtn.addEventListener("click", toggleSelectedLock);
   deleteBtn.addEventListener("click", deleteSelected);
   document.querySelector("#save-btn").addEventListener("click", () => openProjectModal("save"));
@@ -1113,6 +1123,7 @@ function wireUi() {
   document.querySelector("#redo-btn").addEventListener("click", redo);
   document.querySelector("#iso-view").addEventListener("click", () => setViewMode("iso"));
   document.querySelector("#top-view").addEventListener("click", () => setViewMode("top"));
+  frameViewBtn.addEventListener("click", framePropertyView);
   document.querySelector("#walk-view").addEventListener("click", () => setViewMode("walk"));
   document.querySelector("#shell-view").addEventListener("click", toggleShellView);
   roofsToggleBtn.addEventListener("click", toggleRoofsVisible);
@@ -1129,6 +1140,9 @@ function wireUi() {
   projectPrimaryBtn.addEventListener("click", handleProjectPrimary);
   projectSecondaryBtn.addEventListener("click", closeProjectModal);
   projectCloseBtn.addEventListener("click", closeProjectModal);
+  exportBtn.addEventListener("click", exportProjectJson);
+  importBtn.addEventListener("click", () => importFileInput.click());
+  importFileInput.addEventListener("change", importProjectJson);
   projectModal.addEventListener("cancel", (event) => {
     event.preventDefault();
     closeProjectModal();
@@ -3143,9 +3157,11 @@ function updateInspector() {
     lengthInput.disabled = true;
     if (lengthField) lengthField.hidden = true;
     duplicateBtn.disabled = true;
+    randomizeVariantBtn.disabled = true;
     lockRoomBtn.disabled = true;
     deleteBtn.disabled = true;
     lockRoomBtn.textContent = "Lock item";
+    syncRoomNavigator();
     updateSelectionHelper();
     return;
   }
@@ -3160,6 +3176,7 @@ function updateInspector() {
   if (variantField) variantField.hidden = false;
   scaleInput.disabled = Boolean(entry.locked) || isRoomEntry(entry);
   duplicateBtn.disabled = isMainRoomEntry(entry);
+  randomizeVariantBtn.disabled = Boolean(entry.locked) || variantsForKind(entry.kind).length < 2;
   lockRoomBtn.disabled = false;
   const selectedEntries = getSelectedEntries();
   deleteBtn.disabled = selectedEntries.every(isMainRoomEntry) || selectedEntries.some((item) => item.locked);
@@ -3170,6 +3187,8 @@ function updateInspector() {
   syncLengthUi(entry);
   syncVariantUi(entry);
   if (entry.locked) variantSelect.disabled = true;
+  if (entry.locked) randomizeVariantBtn.disabled = true;
+  syncRoomNavigator();
   updateSelectionHelper();
 }
 
@@ -3326,6 +3345,7 @@ function syncVariantUi(entry) {
   if (!variants.length) {
     if (variantField) variantField.hidden = true;
     variantSelect.disabled = true;
+    randomizeVariantBtn.disabled = true;
     return;
   }
   if (variantField) variantField.hidden = false;
@@ -3337,6 +3357,22 @@ function syncVariantUi(entry) {
   });
   entry.variant = entry.variant || variants[0].id;
   variantSelect.value = entry.variant;
+}
+
+function randomizeSelectedVariant() {
+  const entry = getSelectedEntry();
+  if (!entry || entry.locked) return;
+  const variants = variantsForKind(entry.kind);
+  if (variants.length < 2) return;
+  const currentIndex = variants.findIndex((variant) => variant.id === entry.variant);
+  const choices = variants.filter((_, index) => index !== currentIndex);
+  const next = choices[Math.floor(Math.random() * choices.length)] || variants[0];
+  entry.variant = next.id;
+  rebuildEntry(entry);
+  clampEntryToRoom(entry);
+  updateInspector();
+  pushHistory();
+  flashHint(`${entry.label} style changed to ${next.label}.`);
 }
 
 function toggleSelectedLock() {
@@ -3725,6 +3761,51 @@ function handleProjectPrimary() {
   closeProjectModal();
 }
 
+function exportProjectJson() {
+  syncAllEntries();
+  const payload = serialize();
+  const projectName = state.currentProjectName || "HomeForge project";
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${safeFilename(projectName)}.homeforge.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  flashHint(`${projectName} exported.`);
+}
+
+function importProjectJson(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  const reader = new FileReader();
+  reader.addEventListener("load", () => {
+    try {
+      const payload = JSON.parse(String(reader.result || "{}"));
+      if (!payload.room || !Array.isArray(payload.objects)) throw new Error("Invalid HomeForge project file.");
+      deserialize(payload, true);
+      state.currentProjectId = null;
+      state.currentProjectName = payload.projectName || file.name.replace(/\.homeforge\.json$|\.json$/i, "") || "Imported project";
+      updateInspector();
+      flashHint(`${state.currentProjectName} imported.`);
+    } catch (error) {
+      flashHint(error.message || "Import failed.");
+    }
+  });
+  reader.readAsText(file);
+}
+
+function safeFilename(value) {
+  return String(value || "homeforge-project")
+    .trim()
+    .replace(/[^a-z0-9-_]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64) || "homeforge-project";
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char]);
 }
@@ -4025,6 +4106,7 @@ function updateLevelVisibility() {
       entry.group.visible = visibleForLevel(entry.level || 1) && isLayerVisible(entry) && (entry.kind !== "roof" || state.roofsVisible);
     }
   });
+  syncRoomNavigator();
   updateRoomLabels();
   updateSelectionHelper();
 }
@@ -4081,6 +4163,81 @@ function updateRoomLabels() {
       sprite.userData.selectable = false;
       roomLabelGroup.add(sprite);
     });
+}
+
+function syncRoomNavigator() {
+  const selectedValue = isRoomEntry(getSelectedEntry()) ? getSelectedEntry().uid : roomJumpSelect.value || MAIN_ROOM_ID;
+  roomJumpSelect.innerHTML = "";
+  const rooms = [
+    { uid: MAIN_ROOM_ID, label: state.room.label || "Initial Room", level: 1 },
+    ...state.objects.filter(isRoomEntry).map((entry) => ({
+      uid: entry.uid,
+      label: entry.label || "Room",
+      level: entry.level || 1,
+    })),
+  ];
+  rooms.forEach((room) => {
+    const option = document.createElement("option");
+    option.value = room.uid;
+    option.textContent = `${room.label} - L${room.level}`;
+    roomJumpSelect.append(option);
+  });
+  roomJumpSelect.value = rooms.some((room) => room.uid === selectedValue) ? selectedValue : MAIN_ROOM_ID;
+}
+
+function focusRoom(uid) {
+  const entry = uid === MAIN_ROOM_ID ? getMainRoomEntry() : getEntryByUid(uid);
+  if (!isRoomEntry(entry)) return;
+  state.showAllLevels = true;
+  state.activeLevel = entry.level || 1;
+  updateLevelUi();
+  selectObject(entry.uid);
+  frameEntryView(entry);
+  flashHint(`${entry.label || "Room"} selected.`);
+}
+
+function frameEntryView(entry) {
+  const position = isMainRoomEntry(entry) ? new THREE.Vector3(0, 0, 0) : entry.group.position.clone();
+  const width = entry.width || state.room.width;
+  const depth = entry.depth || state.room.depth;
+  frameBounds({
+    x: position.x,
+    z: position.z,
+    width,
+    depth,
+    radius: Math.max(width, depth, 8),
+  });
+}
+
+function framePropertyView() {
+  const entry = getSelectedEntry();
+  if (entry?.group && !isWallOpeningEntry(entry)) {
+    const footprint = getFootprintSize(entry);
+    frameBounds({
+      x: entry.group.position.x,
+      z: entry.group.position.z,
+      width: entry.width || footprint.width || 1,
+      depth: entry.depth || footprint.depth || 1,
+      radius: Math.max(entry.width || footprint.width || 6, entry.depth || footprint.depth || 6, 6),
+    });
+    flashHint(`${entry.label} framed.`);
+    return;
+  }
+  frameBounds(getPropertyBounds());
+  flashHint("Property framed.");
+}
+
+function frameBounds(bounds) {
+  if (["walk", "tour"].includes(state.viewMode)) setViewMode("iso", false);
+  if (state.viewMode === "top") {
+    camera.position.set(bounds.x, Math.max(18, bounds.radius * 1.6), bounds.z + 0.01);
+    orbit.target.set(bounds.x, 0.6, bounds.z);
+  } else {
+    const radius = Math.max(8, bounds.radius * 0.78);
+    camera.position.set(bounds.x + radius, Math.max(5.2, radius * 0.52), bounds.z + radius);
+    orbit.target.set(bounds.x, 1.1, bounds.z);
+  }
+  orbit.update();
 }
 
 function makeRoomLabelSprite(label, level) {

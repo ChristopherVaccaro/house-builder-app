@@ -73,6 +73,12 @@
                 <option value="painted">Painted</option>
               </select>
             </label>
+            <label class="select-control room-jump">
+              <span>Go to</span>
+              <select id="room-jump-select">
+                <option value="main-room">Initial Room</option>
+              </select>
+            </label>
           </div>
 
           <div class="tool-group">
@@ -85,6 +91,7 @@
             <button id="labels-layer-btn" class="tool active" type="button">Labels</button>
             <button id="iso-view" class="tool active" type="button">Iso</button>
             <button id="top-view" class="tool" type="button">Top</button>
+            <button id="frame-view" class="tool" type="button">Frame</button>
             <button id="walk-view" class="tool" type="button">Walk</button>
             <button id="shell-view" class="tool" type="button">Shell</button>
             <button id="roofs-toggle" class="tool active" type="button">Roofs</button>
@@ -95,6 +102,8 @@
             <button id="redo-btn" class="tool" type="button">Redo</button>
             <button id="save-btn" class="tool" type="button">Save</button>
             <button id="load-btn" class="tool" type="button">Load</button>
+            <button id="export-btn" class="tool" type="button">Export</button>
+            <button id="import-btn" class="tool" type="button">Import</button>
             <button id="clear-btn" class="tool danger" type="button">Clear</button>
           </div>
         </header>
@@ -150,6 +159,7 @@
                 <button id="rotate-right" class="icon-tool" type="button" title="Rotate right">R</button>
               </div>
               <button id="duplicate-btn" class="tool lock-tool" type="button">Duplicate</button>
+              <button id="randomize-variant-btn" class="tool lock-tool" type="button">Randomize style</button>
               <button id="lock-room-btn" class="tool lock-tool" type="button">Lock item</button>
             </div>
           </section>
@@ -177,6 +187,7 @@
         </div>
       </form>
     </dialog>
+    <input id="import-file-input" type="file" accept="application/json,.json" hidden />
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
